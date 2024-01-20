@@ -1,0 +1,970 @@
+---
+title: "finalproject"
+author: "HyeongHwan Kim"
+date: "2023-11-06"
+output: html_document
+---
+```{r}
+library(stringr)
+library(purrr)
+library(ggplot2)
+library(forcats)
+library(dplyr)
+library(tidyverse)
+library(readr)
+library(ISLR2)
+library(leaps)
+library(tidymodels)
+```
+
+
+
+# TOPIC 1: Student Performance  
+## Q1  
+
+```{r}
+mat_df <- read.table("student-mat.csv",sep=";",header=TRUE)
+por_df <- read.table("student-por.csv",sep=";",header=TRUE)
+```
+
+```{r}
+head(mat_df)
+```
+```{r}
+head(por_df)
+```
+
+```{r}
+column_name <- names(mat_df)
+column_name <- str_subset(column_name, "^(?!paid$|G1$|G2$|G3$).*$")
+
+temp_df <- left_join(por_df, mat_df, by = column_name)
+merge_df <- temp_df %>%
+  rename('G1.por' = 'G1.x', 'G2.por' = 'G2.x', 'G3.por' = 'G3.x', 'G1.mat' = 'G1.y', 'G2.mat' = 'G2.y', 'G3.mat' = 'G3.y', 'paid.por' = 'paid.x', 'paid.mat' = 'paid.y')
+
+head(merge_df)
+```
+
+```{r}
+nrow(merge_df) - sum(apply(merge_df, 1, anyNA))
+```
+
+## Q2
+
+```{r}
+convert_chr_to_fac <- function(v) {
+  if(is.character(v))
+    return(factor(v))
+  else
+    return(v)
+}
+
+merge_df <- merge_df %>%
+  map_df(convert_chr_to_fac, .x = .)
+```
+
+```{r}
+merge_df %>%
+  dplyr::select(age) %>%
+  unique()
+```
+
+
+```{r}
+age_vec <- 15:17
+age_vec[4] = "mt_18" # more than
+
+merge_df <- merge_df %>%
+  mutate(age.grp = cut(age, breaks = c(15, 16, 17, 18, 10000), right = FALSE, labels = age_vec))
+
+merge_df %>%
+  dplyr::select(age.grp) %>%
+  unique()
+```
+
+```{r}
+merge_df <- merge_df %>%
+  mutate(G3.por.grp = cut(G3.por, breaks = c(0, 10, 12, 14, 16, 21), right = FALSE, labels = c("F", "D", "C", "B", "A")))
+```
+
+```{r}
+merge_df %>%
+  group_by(age.grp) %>%
+  summarise(n = n())
+  
+# ggplot(merge_df) +
+#   geom_bar(mapping = aes(x = age.grp))
+```
+
+```{r}
+merge_df %>%
+  group_by(G3.por.grp) %>%
+  summarise(n = n())
+
+# ggplot(merge_df) +
+#   geom_bar(mapping = aes(x = G3.por.grp))
+```
+
+```{r}
+prop_df <- merge_df %>%
+  filter(!is.na(age.grp)) %>%
+  group_by(sex, age.grp, school) %>%
+  summarise(p = mean(G3.por.grp == "A"))
+```
+
+
+```{r}
+ggplot(data = prop_df) +
+  geom_col(mapping = aes(x = age.grp, y = p))+
+  facet_grid(sex ~ school)
+```
+
+# Q3  
+
+```{r}
+
+check_param <- function(extra.limit, extra.cost, alchol.limit, alchol.cost) {
+  if(is.numeric(extra.limit) == TRUE && is.numeric(extra.cost) == TRUE && is.numeric(alchol.limit) == TRUE && is.numeric(alchol.cost) == TRUE) {
+    if(extra.limit >= 0 && extra.limit <=20 && alchol.limit >=1 && alchol.limit <=5 && extra.cost >= 0 && alchol.cost >= 0)
+      return(TRUE)
+    else
+    return(FALSE)
+  }
+  else
+    return(FALSE)
+}
+
+welfare_func <-function(df, welfare.type = "both", G3.por.limit = 0, extra.cost = 0, Dalc.limit = 1, alchol.cost = 0, ...) {
+  
+  type <- welfare.type
+  
+  alchol.limit <- Dalc.limit
+  extra.limit <- G3.por.limit
+  
+  extra.num <- 0
+  extra.tot.cost <- 0
+  alchol.num <- 0
+  alchol.tot.cost <- 0
+  
+  add_param <- c()
+
+  if(type == "extra") {
+    alchol.limit <- 1
+    alchol.cost <- 0
+    add_param <- c(alchol.limit, alchol.cost)
+  } else if(type == "alchol") {
+    extra.limit <- 1
+    extra.cost <- 0
+    add_param <- c(extra.limit, extra.cost)
+  }
+  add_param <- c(add_param, ...)
+  
+  if(length(add_param) > 0) {
+    print("The additional parameters will be regarded.")
+  }
+  
+  if((type == "both" || type == "extra" || type == "alchol") && check_param(extra.limit, extra.cost, alchol.limit, alchol.cost) == TRUE) {
+    if(type == "both" || type == "extra") {
+      df <- df %>%
+        mutate(extra = ifelse(higher == "yes" & G3.por <= extra.limit, TRUE, FALSE))
+      
+      extra.num <- df %>%
+        filter(extra == TRUE) %>%
+        nrow()
+      
+      extra.tot.cost <- extra.num * extra.cost
+      if(type == "extra") {
+        cat(extra.num, "students will benefit from the extra walfare, and the required cost is", extra.tot.cost, "WON.\n")
+      }
+    } 
+    if(type == "both" || type == "alchol") {
+      df <- df %>%
+        mutate(alchol = ifelse(Walc == 5 & Dalc >= alchol.limit, TRUE, FALSE))
+      
+      alchol.num <- df %>%
+        filter(alchol == TRUE) %>%
+        nrow()
+      alchol.tot.cost <- alchol.num * alchol.cost
+      if(type == "alchol") {
+        cat(alchol.num, "students will benefit from the alchol walfare, and the required cost is", alchol.tot.cost, "WON.")
+      }
+    }
+    if(type == "both") {
+      both.num <- df %>% 
+        filter(extra == TRUE | alchol == TRUE) %>%
+        nrow()
+
+      cat(both.num, "students will benefit from the both walfares, and the required cost is", alchol.tot.cost + extra.tot.cost, "WON.")
+    }
+    invisible(df)
+  } else {
+    print("VALUE ERROR")
+  }
+}
+
+#for test
+
+merge_df %>%
+  welfare_func(G3.por.limit = 12, welfare.type = "both", Dalc.limit = 3)
+
+```
+각 파라미터의 default 값은 아래와 같다.  
+
+welfare.type = "both", G3.por.limit = 0, extra.cost = 0, Dalc.limit = 1, alchol.cost = 0  
+
+
+# TOPIC 2  
+## Q4  
+
+```{r}
+ob_df <- read.table("ObesityDataSet_raw_and_data_sinthetic.csv",sep=",",header=TRUE)
+```
+
+
+```{r}
+ob_df <- ob_df %>%
+  mutate(FCVC = case_when(round(FCVC) == 1 ~ "never", round(FCVC) == 2 ~ "sometimes", round(FCVC) == 3 ~ "always"), 
+         NCP = case_when(NCP < 2.5 ~ "1~2번", NCP >= 2.5 & NCP < 3.5 ~ "3번", NCP >= 3.5 ~ "4번 이상"),
+         CH2O = case_when(round(CH2O) == 1 ~ "1리터 미만", round(CH2O) == 2 ~ "1리터 이상 2리터 미만", round(CH2O) == 3 ~ "2리터 이상" ),
+         FAF = case_when(round(FAF) == 0 ~ "no", round(FAF) == 1 ~ "1~2 days", round(FAF) == 2 ~ "2~4 days", round(FAF) == 3 ~ "4~5 days"),
+         TUE = case_when(round(TUE) == 0 ~ "0~2 hours", round(TUE) == 1 ~ "3~5 hours", round(TUE) == 2 ~ "more than 5 hours"))
+
+```
+
+
+```{r}
+convert_chr_to_fac <- function(v) {
+  if(is.character(v))
+    return(factor(v))
+  else
+    return(v)
+}
+
+ob_df <- ob_df %>%
+  map_df(convert_chr_to_fac, .x = .)
+```
+
+
+```{r}
+levels(ob_df$FCVC)
+```
+```{r}
+levels(ob_df$CAEC)
+```
+```{r}
+levels(ob_df$CALC)
+```
+FCVC, CAEC와 CALC는 순서대로 정렬되어 있지 않다.  
+
+```{r}
+levels(ob_df$family_history_with_overweight)
+```
+
+```{r}
+levels(ob_df$FAVC)
+```
+```{r}
+levels(ob_df$SMOKE)
+```
+```{r}
+levels(ob_df$SCC)
+```
+binary variable들은 모두 no, yes 순으로 level이 설정되어 있다.
+
+```{r}
+levels(ob_df$NCP)
+```
+```{r}
+levels(ob_df$CH2O)
+```
+```{r}
+levels(ob_df$FAF)
+```
+no가 앞으로 가는 게 좋을 것이다.  
+
+```{r}
+levels(ob_df$TUE)
+```
+
+```{r}
+levels(ob_df$MTRANS)
+```
+교통수단 사이에 특정한 순서가 있는 것이 아니므로 정렬되어 있지 않다고 말할 근거가 부족하다. 굳이 따지자면 상식적인 측면에서 Automobile, Motorbike, Public_Transportation, Bike, Walking 순서가 나을 것으로 보인다. 
+
+```{r}
+levels(ob_df$NObeyesdad)
+```
+
+NObeyesdad도 정렬되어 있지 않다. 저체중 - 정상 - 과제중 - 비만 순서가 올바른 순서이나, 비만과 과체중이 위치가 바뀌어 있다.  
+
+```{r}
+ob_df <- ob_df %>%
+  mutate(FCVC = fct_relevel(FCVC, c("always", "sometimes", "never")), 
+                            CAEC = fct_relevel(CAEC, c("Always", "Frequently", "Sometimes", "no")), 
+                            CALC = fct_relevel(CALC, c("Always", "Frequently", "Sometimes", "no")), 
+                            FAF = fct_relevel(FAF, c("no", "1~2 days", "2~4 days", "4~5 days")), 
+                            MTRANS = fct_relevel(MTRANS, c("Automobile", "Motorbike", "Public_Transportation", "Bike", "Walking")), 
+                            NObeyesdad = fct_relevel(NObeyesdad, c("Insufficient_Weight", "Normal_Weight", "Overweight_Level_I", "Overweight_Level_II", "Obesity_Type_I", "Obesity_Type_II", "Obesity_Type_III")))
+```
+
+
+```{r}
+summary(ob_df)
+```
+
+## Q5  
+
+```{r}
+ob_df <- ob_df %>%
+  mutate(BMI = Weight / Height**2, Weight_Category = cut(BMI, c(0, 18.5, 25, 30, Inf), c("underweight", "normal weight", "overweight", "obesity"))) 
+```
+
+```{r}
+
+ggplot(ob_df %>% group_by(NObeyesdad, Weight_Category) %>% summarise(count = n())) +
+  geom_tile(mapping = aes(y = NObeyesdad, x = Weight_Category, fill = count)) +
+  scale_fill_gradient(high = "blue", low = "skyblue")
+```
+NObeyesdad column과 Weight_Category column이 비슷한 경향성을 보이나 완전히 같지는 않다. Weight_Category가 underweight임에도 NObeyesdad 상으로는 정상 체중인 사람이 있고 이는 normal weight, overweight, obesity level의 경우도 마찬가지이다. 
+
+
+## Q6  
+
+```{r}
+cor(ob_df$Height, ob_df$BMI)
+```
+```{r}
+cor(ob_df$Weight, ob_df$BMI)
+```
+
+```{r}
+cor(ob_df$BMI, ob_df$Age)
+```
+
+Height와 Age는는 BMI와의 correlation이 작은 반면, Weight는는 굉장히 높다.  
+
+
+우선 음식과 관련 있는 변수 중 3개와 family_history_with_overweight 변수를 함께 살펴보자.  
+
+```{r fig.height = 10, fig.width = 7}
+ggplot(ob_df) +
+  geom_boxplot(mapping = aes(x = FAVC, y = BMI, col = family_history_with_overweight)) +
+  facet_wrap(~FCVC + CH2O)
+```
+고칼로리 음식을 자주 먹는 경우 (FAVC) BMI가 높은 쪽에 데이터가 몰려 있음을 확인할 수 있다. 또한, 가족력이 있는 경우에 (family_history_with_overweight) 파란색 점과 붉은색 점이 대체로 분리되어 있는 것을 볼 수 있고 특히 파란색의 경우 BMI가 높은 쪽에 몰려 있다. 그리고 채소를 먹는 횟수 (FCVC)에 대해서 그래프는 FCVC가 클수록 BMI가 높은 사람도 많다는 결과를 보여주는데 (2열을 보면 그 경향성이 두드러지게 드러난다.), 이는 상식에 반하는 결과이다. 이 경우 채소를 많이 먹는 사람이 먹는 양이 많은 것으로 해석해볼 수 있을 것이다. 그러므로 BMI에 유의하게 작용한다고 볼 수는 있을 것이다. 전반적으로 물을 많이 마실수록 (CH2O가 커질수록) BMI가 높아짐을 확인할 수 있다. FCVC와 CH2O가 달라도 그래프의 양상이 대부분 비슷하기 때문에, 이들 간 상관관계는 높지 않을 것으로 생각된다.  
+
+
+한편, MTRANS 변수에서, 
+
+```{r}
+lm_model <- lm(BMI~MTRANS, data = ob_df)
+```
+
+```{r}
+sum((predict(lm_model, ob_df) - ob_df$BMI)^2)
+```
+```{r}
+n_ob_df <- ob_df %>%
+  mutate(nMTRANS = case_when(MTRANS == "Automobile" | MTRANS == "Motorbike" ~ "Auto", MTRANS == "Public_Transportation" ~ "Public", MTRANS == "Bike" | MTRANS == "Walking" ~ "Walking"))
+```
+
+```{r}
+lm_model <- lm(BMI~nMTRANS, data = n_ob_df)
+```
+
+```{r}
+sum((predict(lm_model, n_ob_df) - n_ob_df$BMI)^2)
+```
+
+Motorbike와 Bike level을 다른 변수와 합쳤을 때 선형 회귀의 에러의 증가 폭이 크지 않으므로, 모델의 복잡도 및 분산을 줄이기 위해 코드에 나와있듯이 총 3개의 level로만 구성된 새로운 nMTRANS 변수를 만드는 것이 나을 것이다.  
+
+```{r}
+summary(n_ob_df$BMI[n_ob_df$nMTRANS == "Auto"])
+```
+```{r}
+summary(n_ob_df$BMI[n_ob_df$nMTRANS == "Public"])
+```
+```{r}
+summary(n_ob_df$BMI[n_ob_df$nMTRANS == "Walking"])
+```
+summary() 함수를 통해 nMTRANS별 분포를 살펴보자. Walking은 다른 레벨과 비교해서 분포에 큰 차이가 있어보이나, 앞에 두 개 (Auto, Public)은 비슷해 보인다. t-test를 통해 확인해보자.  
+
+```{r}
+t.test(BMI ~ nMTRANS, n_ob_df %>% filter(nMTRANS != "Walking"))
+```
+데이터 개수가 많기 때문에 평균 차이가 적어보여도 그 차이가 유의하다는 결론을 보여준다.  
+
+Gender, SMOKE와 CALC, SCC 변수에 대해서도 비슷한 방식의 EDA를 수행하자.  
+
+```{r}
+summary(ob_df$BMI[ob_df$Gender == "Male"])
+```
+```{r}
+summary(ob_df$BMI[ob_df$Gender == "Female"])
+```
+```{r}
+t.test(BMI ~ Gender, ob_df)
+```
+p-value도 0.05보다 낮고 무엇보다 그룹의 분산에 차이가 크기 때문에 Gender는 유의하다고 볼 수 있다.  
+
+```{r}
+summary(ob_df$BMI[ob_df$SMOKE == "yes"])
+```
+
+
+```{r}
+summary(ob_df$BMI[ob_df$SMOKE == "no"])
+```
+```{r}
+t.test(BMI ~ SMOKE, ob_df)
+```
+p-value가 1에 가까우므로, SMOKE에 따른 BMI의 평균 차이는 없다고 볼 수 있다.  
+
+```{r}
+anova_fit <- aov(ob_df$BMI ~ ob_df$CALC)
+summary(anova_fit)
+```
+
+anova 적합 시 CALC는 BMI에 확연한 영향을 미친다는 것을 알 수 있다.
+
+```{r}
+t.test(BMI ~ SCC, ob_df)
+```
+SCC는 평균 차이가 무려 7이나 나고 p-value 값도 0에 가까움을 볼 수 있다. 즉, SCC는 BMI에 매우 유의하게 작용하는 변수이다. 
+
+나머지 음식과 관련된 변수 (CAEC, CH2O)를 살펴보자.
+```{r}
+ggplot(ob_df) +
+  geom_boxplot(mapping = aes(x = CAEC, y = BMI, col = NCP))
+```
+
+간식 섭취 빈도에 따른 BMI는 단조 증가 혹은 감소하는 경향성을 갖기 보다는 증감이 왔다갔다 하는 모습을 보인다. Frequently에서 가장 작은 값을 갖고 Sometimes에서 가장 높은 값을 갖는다. 즉, 간식이 BMI에 영향을 준다기보다는 단지 그 카테고리에 해당되는 사람들이 다른 x값들에 대해 차이를 갖고 표본 수에 큰 차이가 나기 때문에 위와 같은 결과가 나온 것으로 생각된다. 그래서 CAEC에 영향을 줄 수 있는 변수인 NCP를 같이 도식화했다. 일반적인 경우에는 밥을 3번 먹는 사람이 가장 많으나, 간식을 항상 먹는 (Always) 사람들의 경우 간식의 영향으로 밥을 1~2번만 먹는 경우가 많다. 즉 NCP와 CAEC는 어느 정도 상관관계가 존재한다. NCP는 3>1~2>4의 순서로 BMI가 크다. 대부분의 사람들일 밥을 3번 먹는다는 점 (즉 표본 수의 불균형)이 직관에 반하는 결과를 야기한 것으로 보인다. 그러므로 표본 수의 불균형으로 인하여 결과가 상식에 반하기 때문에 이 두 변수는 고려하지 않는 것이 좋을 것 같다.  
+
+
+```{r}
+ggplot(ob_df) +
+  geom_boxplot(mapping = aes(x = FAF, y = BMI, col = TUE))
+```
+일주일에 운동하는 횟수가 많을수록 BMI가 줄어듦이 확연하게 보인다. 그리고 전자기기 사용시간은 FAF가 no부터 2~4 days일 때까지는 3~5 hours > 0~2 hours > more than 5 hours 순이고 FAF가 4~5 days일 때는 시간에 따라 BMI도 증가한다. (전체적으로는 3~5 hours > 0~2 hours > more than 5 hours이다.)  
+뒤쪽의 두 레벨을 합쳐본 결과, 평균 차이가 거의 나지 않음을 확인할 수 있었다. 즉, 핸드폰 사용 시간은 BMI에 영향을 주지 않는다.  
+
+```{r}
+summary(ob_df$BMI[ob_df$TUE=="0~2 hours"])
+```
+```{r}
+summary(ob_df$BMI[(ob_df$TUE=="3~5 hours") | (ob_df$TUE == "more than 5 hours")])
+```
+
+NObeyesdad는 Q5에서 BMI와 연관성이 있음을 밝혔다.  
+
+## Q7  
+
+```{r}
+set.seed(1234)
+temp_ob <- n_ob_df %>%
+  initial_split(0.8)
+train <- temp_ob %>%
+  training()
+test <- temp_ob %>%
+  testing()
+```
+
+
+BMI에 영향을 준다고 판단되는 변수는 다음과 같다.  
+
+Gender, Weight, family_history_with_overweight, FAVC, FCVC, CH2O, nMTRANS, CALC, SCC, FAF, NObeyesdad  
+이들로 모델을 적합시키면,  
+
+```{r}
+lm_fit <- lm(BMI ~ Weight + family_history_with_overweight + FAVC + FCVC + CH2O + nMTRANS + CALC + SCC + FAF + NObeyesdad + Gender, data = train)
+pred <- lm_fit$fitted.values
+mean((pred - train$BMI)^2)
+```
+
+train set의 mse는 1.379가 나왔다. BMI의 스케일이 20~50 정도임을 고려하면 매우 적은 오차임을 알 수 있다.  
+
+```{r}
+pred <- predict(lm_fit, test)
+mean((pred - test$BMI)^2)
+```
+valid set의 mse도 1.511로 매우 작은 값이 나왔다.  
+
+```{r}
+plot(lm_fit, which = 1)
+```
+
+residual이 0 주변에 균등하게 분포되어 있으므로로 적합이 잘 되었다고 볼 수 있다.  
+
+interaction을 고려하기 위해 EDA를 추가로 수행해보자.  
+continuous 변수인 Weight와 categorical 변수 간의 interaction을 파악하기 위해 여러 plot을 그려본 결과, Weight와 Gender 사이 interaction이 유의하게 나오는 것을 알 수 있었다.  
+
+
+```{r}
+ggplot(n_ob_df) +
+  geom_point(mapping = aes(x = Weight, y = BMI, col = Gender))
+```
+```{r}
+lm_fit_inter <- lm(BMI ~ Gender * Weight + family_history_with_overweight + FAVC + FCVC + CH2O + nMTRANS + CALC + SCC + FAF + NObeyesdad, data = train)
+pred <- lm_fit_inter$fitted.values
+mean((pred - train$BMI)^2)
+```
+```{r}
+pred <- predict(lm_fit_inter, test)
+mean((pred - test$BMI)^2)
+```
+MSE가 interaction term이 없을 때에 비해서 확연히 줄어듦을 확인할 수 있었다.
+
+```{r}
+plot(lm_fit_inter, which = 1)
+```
+
+모델 역시 잘 적합되었음을 plot을 통해 확인할 수 있다.
+
+# TOPIC 3  
+## Q8  
+
+```{r}
+#int_columns <- c("instant", "yr", "mnth", "hr")
+hr_df <- read_csv("hour.csv", col_types = (cols(instant = col_integer(),
+                                                season = readr::col_factor(),
+                                                yr = col_integer(),
+                                                mnth = col_integer(),
+                                                hr = col_integer(),
+                                                holiday = readr::col_factor(),
+                                                weekday = readr::col_factor(),
+                                                workingday = col_integer(),
+                                                weathersit = readr::col_factor(), 
+                                                temp = col_double(),
+                                                atemp = col_double(),
+                                                hum = col_double(),
+                                                windspeed = col_double(),
+                                                casual = col_integer(),
+                                                registered = col_integer(),
+                                                cnt = col_integer())))
+```
+
+
+```{r}
+hr_df <- hr_df %>%
+  mutate(season = recode_factor(season, "1" = "Win", "2" = "Spr", "3" = "Sum", "4" = "Aut"),
+         weekday = recode_factor(weekday, "0" = "Sun", "1" = "Mon", "2" = "Tue", "3" = "Wed", "4" = "Thu", "5" = "Fri", "6" = "Sat"),
+         weathersit = recode_factor(weathersit, "1" = "Clear", "2" = "Cloudy", "3" = "Light", "4" = "Heavy"))
+```
+
+```{r}
+str(hr_df)
+```
+## Q9  
+
+```{r}
+tot_hr_df <- hr_df %>%
+  group_by(dteday) %>%
+  summarise(total = sum(cnt))
+```
+
+```{r}
+ggplot(tot_hr_df) +
+  geom_line(mapping = aes(x = dteday, y = total)) + 
+  ggrepel::geom_label_repel(mapping = aes(x = dteday, y = total, label = format(dteday)), data = tot_hr_df %>% filter(total < 500)) +
+  geom_point(mapping = aes(x = dteday, y = total, label = format(dteday)), data = tot_hr_df %>% filter(total < 500), col = "red")
+```
+```{r}
+hr_df %>%
+  filter(dteday == ymd(20110127)) 
+```
+
+오후 시간대의 데이터가 없다. 'January 25–27, 2011 North American blizzard'의 영향으로 보인다.  
+
+```{r}
+hr_df %>%
+  filter(dteday == ymd(20121029)) 
+```
+0시의 데이터만 존재한다. 허리케인 Sandy가 이 날 뉴욕을 강타한 사건 때문으로 보인다.
+
+```{r}
+hr_df %>%
+  filter(dteday == ymd(20121226)) 
+```
+
+2012년 12월 26일의 경우는 데이터는 정상적으로 존재하나 유독 다른 날보다 대여량이 적다. 위키피디아에 따르면, 'A moderate severe weather outbreak pounds several southern U.S. states on Christmas Day, including Texas, Alabama, Mississippi and Louisiana.' 라고 한다. 실제로 그런지 확인해보자.  
+
+```{r}
+low_temp_days <- hr_df %>%
+  filter(atemp <= 0.2) %>%
+  dplyr::select(dteday) %>%
+  unique()
+```
+
+
+```{r}
+ggplot(tot_hr_df) +
+  geom_line(mapping = aes(x = dteday, y = total), col = ifelse(tot_hr_df$dteday %in% low_temp_days$dteday, "black", "red"))
+# atemp <= 0.2인 때 체크해보자
+```
+
+자전거 대여량과 온도의 연관성을 찾기 위해 체감온도가 0.2 이하인 날들은 검은색으로 표시하였다. 그 경우 자전거 대여량이 적은 날들은 거의 체감온도가 낮음을 확인할 수 있었다.
+
+
+```{r}
+ymd("20121226") %in% low_temp_days$dteday
+```
+그리고 2012-12-26 역시 체감온도가 매우 낮은 날에 해당한다. 따라서 온도의 영향으로 인해 대여량이 급격하게 줄어들었을 것이라 추측할 수 있다.
+
+## Q10  
+
+```{r}
+l_hr_df <- hr_df %>%
+  pivot_longer(cols = casual:registered,
+               names_to = "is_registered",
+               values_to = "cond_count")
+```
+
+```{r}
+l_hr_df %>%
+  group_by(hr, is_registered, season, holiday) %>%
+  summarise(mean = mean(cond_count))
+```
+
+
+```{r fig.height = 7, fig.width = 10}
+ggplot(l_hr_df %>%
+  mutate(holiday = ifelse(holiday == 0, "workingday", "holiday")) %>%
+  group_by(hr, is_registered, season, holiday) %>%
+  summarise(mean = mean(cond_count))) +
+  geom_line(mapping = aes(x = hr, y = mean, col = season)) +
+  facet_wrap(~holiday + is_registered) +
+  labs(title = "사용자 등록 여부, 휴일 여부와 계절에 따른 시간별 자전거 대여량") +
+  xlab("hour") +
+  ylab("count (mean)") 
+  
+```
+
+요일별 그래프보다 휴일 여부에 따른 그래프가 정보 손실은 적으면서 더 간편한 그래프를 보여준다는 점에서 weekday 변수는 사용하지 않고 holiday 변수 사용하였다. 그리고 season과 사용자 등록 여부 변수도 추가하여 시간별 자전거 대여량의 평균에 대한 그래프를 그렸다.  
+우선 casual user의 경우, 휴일인지 아닌지에 상관없이 Summer>Spring>Autumn>Winter의 순서대로 자전거 대여량이 많았다. 즉, 온도가 높을수록 자전거를 타는 경향이 높다는 것이다. 그리고 주로 낮~오후 시간대 (10시~3시) 때 자전거를 대여하는 사람이 가장 많았다. 그릐고 휴일에 자전거를 대여하는 사람이 더 많았다.  
+한편, registered user의 경우는 평일에는 계절에 상관없이 그래프가 모두 비슷한 개형을 보인다. 모두 출퇴근 시간대에 그래프가 피크를 찍는다. 그러나, 휴일의 경우는 봄과 가을에는 출퇴근 시간에 피크를 찍기는 하지만 그 정도가 평일인 경우보다 작다. 그리고 여름과 겨울의 그래프는 casual user와 비슷한 개형을 보인다.  
+
+```{r}
+cor(hr_df$temp, hr_df$atemp)
+```
+온독와 체감 온도 사이의 상관관계가 매우 높으므로, 온도에 대한 EDA를 수행한다면 둘 중 한 변수에 대해서만 EDA를 진행할 것이다. 
+
+```{r}
+hr_df %>%
+  group_by(season) %>%
+  summarise(mean = mean(temp))
+```
+
+```{r}
+season_num_df <- hr_df %>%
+  mutate(season_num = case_when(season == "Spr" ~ 3, season == "Sum" ~ 4, season == "Aut" ~ 2, season == "Win" ~ 1)) %>%
+  dplyr::select(season_num)
+cor(hr_df$temp, season_num_df$season_num)
+```
+그런데 season과 temp 사이 상관계수를 계산해보면 0.78로 강한 상관을 보인다는 것을 알 수 있다. 이는 곧 그래프의 개형도 비슷할 것을 의미하므로, 온도에 따른 시간대별 자전거 대여량 그래프는 계절에 따른 시간대별 자전거 대여량 그래프를 대체할 수 있다. (그래프 제한이 없다면 온도에 따른 그래프도 그리는 것이 좋을 것이다.)  
+
+```{r}
+Q_hum <- c(0, quantile(hr_df$hum, 0.25), quantile(hr_df$hum, 0.5), quantile(hr_df$hum, 0.75), 1)
+
+hr_df %>%
+  filter(hum != 0) %>% # humid = 0인 행은 오류일 가능성이 높으므로.
+  mutate(hum_cut = cut(hum, Q_hum, label = c("~25%", "25%~50%", "50%~75%", "75%~"), include.lowest = TRUE)) %>%
+  group_by(hum_cut, hr, weathersit) %>%
+  summarise(mean = mean(cnt))
+```
+
+
+```{r fig.height = 7, fig.width = 10}
+
+ggplot(hr_df %>%
+  filter(hum != 0) %>% # humid = 0인 행은 오류일 가능성이 높으므로.
+  mutate(hum_cut = cut(hum, Q_hum, label = c("~25%", "25%~50%", "50%~75%", "75%~"), include.lowest = TRUE)) %>%
+  group_by(hum_cut, hr, weathersit) %>%
+  summarise(mean = mean(cnt))) + 
+  geom_line(mapping = aes(x = hr, y = mean, col = hum_cut)) +
+  facet_wrap(~weathersit, nrow = 2) + 
+  labs(title = "습도에 따른 시간대별 자전거 대여량") +
+  xlab("hour") +
+  ylab("count (mean)")
+```
+
+습도에 영향을 미치는 변수로 운량이 있으므로 facet에 운량을 넣어서 습도에 따른 시간대별 자전거 대여량을 그려보았다.  
+운량이 Clear와 Cloudy일 때는 습도의 percentile이 75% 정도일 때까지에서는 자전거 대여량에 큰 차이가 없으나 습도의 percentile이 75% 이상인 경우 10시~20시 정도의 시간대에서는 자전거 대여량이 다른 경우보다 줄어듦을 관찰할 수 있었다. (그 외의 시간대는 자전거를 타지 않는 새벽 or 심야이거나, 출근 시간대이다. 이 경우들은 자전거 대여 여부가 습도에 큰 관계가 없을 것이다.) 
+운량이 Light일 때,  
+출근 시간대: 습도가 낮을수록 대여량이 높다.  
+낮~오후 시간대: 75% 이상일 때를 제외하고는 비슷하다.  
+퇴근 시간대: 습도가 25%~50%일 때 대여량이 가장 많고 75%~일 때 역시나 가장 적은 대여량을 보인다.  
+Light일 때 일관적인 경향성을 보이지 않는 이유는 데이터 자체가 적어서 그런 것으로 생각된다. (아래 분할표 참고)
+전체적으로 운량이 증가할수록 대여량도 줄어드는 경향성을 보인다.
+
+```{r}
+hr_df %>%
+  filter(hum != 0) %>% # humid = 0인 행은 오류일 가능성이 높으므로.
+  mutate(hum_cut = cut(hum, Q_hum, label = c("~25%", "25%~50%", "50%~75%", "75%~"), include.lowest = TRUE)) %>%
+  dplyr::select(weathersit, hum_cut) %>%
+  table()
+
+# hr_df %>%
+#   filter(hum != 0) %>% 
+#   mutate(hum_cut = cut(hum, Q_hum, label = c("~25%", "25%~50%", "50%~75%", "75%~"), include.lowest = TRUE)) %>%
+#   group_by(weathersit, hum_cut) %>%
+#   summarise(n = n()) %>%
+#   table()
+```
+
+
+```{r}
+Q_wind <- c(0, quantile(hr_df$windspeed, 0.25), quantile(hr_df$windspeed, 0.5), quantile(hr_df$windspeed, 0.75), 1)
+
+ggplot(hr_df %>%
+  mutate(wind_cut = cut(windspeed, Q_wind, label = c("~25%", "25%~50%", "50%~75%", "75%~"), include.lowest = TRUE)) %>%
+  group_by(wind_cut, hr) %>%
+  summarise(mean = mean(cnt))) + geom_line(mapping = aes(x = hr, y = mean, col = wind_cut)) +
+  labs(title = "풍속에 따른 시간대별 자전거 대여량") +
+  xlab("hour") +
+  ylab("count (mean)")
+```
+
+풍속에 따라서는 대여량이 시간대별로 큰 차이를 보이지 않는다.  
+
+# Topic 4  
+## Q11  
+
+workclass (X2), occupation (X7), native-country (X14)가 결측치를 갖고 있다.  
+그리고 그 결측값은 모두 "?"로 표시되어 있다.  
+
+```{r}
+adult_df <- read_csv("adult.data", col_names = FALSE, na = c("?", "NA"))
+```
+
+```{r}
+adult_names <- read_csv("adult.names")
+```
+
+```{r}
+colnames(adult_names) <- c("col")
+
+adult_names <- tail(adult_names, 14) 
+
+column_names <- adult_names %>%
+  mutate(extracted = str_extract_all(col, "^[a-z|-]+:")) %>%
+  unnest(extracted) %>%
+  mutate(extracted = str_replace_all(extracted, c(":" = "", "-" = "_"))) %>%
+  dplyr::select(extracted)
+
+column_names <- column_names$extracted
+
+colnames(adult_df) <- column_names
+colnames(adult_df)[15] <- "salary"
+```
+
+```{r}
+convert_chr_to_fac <- function(v) {
+  if(is.character(v))
+    return(factor(v))
+  else
+    return(v)
+}
+
+
+adult_df <- adult_df %>%
+  map_df(convert_chr_to_fac, .x = .)
+```
+
+```{r}
+str(adult_df)
+```
+## Q12  
+
+```{r}
+levels(adult_df$workclass)
+```
+```{r}
+mid_adult_df <- adult_df %>%
+  mutate(workclass = fct_collapse(workclass, "government" = str_subset(levels(adult_df$workclass), "-gov$"),
+                                  "Self-emp" = str_subset(levels(adult_df$workclass), "^Self-emp")))
+```
+
+```{r}
+mid_adult_df %>%
+  group_by(workclass) %>%
+  summarise(n = n())
+```
+Never-worked, Without-pay 항목이 20개 이하의 데이터를 갖는다.
+
+```{r}
+adult_df <- adult_df %>%
+  mutate(workclass = fct_collapse(workclass, "government" = str_subset(levels(adult_df$workclass), "-gov$"),
+                                  "Self-emp" = str_subset(levels(adult_df$workclass), "^Self-emp"))) %>%
+  mutate(workclass = fct_lump_min(workclass, 20, other_level = "Other"))
+```
+
+```{r}
+n_df <- adult_df %>%
+  filter(is.na(workclass) == FALSE) %>%
+  group_by(workclass) %>%
+  summarise(n = n())
+
+filter_df <- adult_df %>%
+  filter(is.na(workclass) == FALSE, salary == ">50K") %>%
+  group_by(workclass) %>%
+  summarise(n = n())
+
+n_df
+new_df <- left_join(n_df, filter_df, by = "workclass") %>%
+  mutate_if(is.numeric, coalesce, 0) %>%
+  mutate(prop = n.y / n.x)
+
+new_df
+
+ggplot(data = new_df) +
+  geom_bar(mapping = aes(x = fct_reorder(workclass, prop), y = prop), stat = "identity") +
+  xlab("workclass") +
+  ylab("proportion") +
+  labs(title = "workclass별 연 소득 $50K 이상인 사람의 비율")
+```
+
+Other -> Private -> Government -> Self-emp 순으로 비율이 높아졌다. 특히 Other은 해당하는 관측값이 0개였다.  
+
+
+## Q13  
+
+
+```{r}
+accuracy <- function(table) {
+  return((table[1, 1] + table[2, 2])/(sum(table)))
+}
+```
+
+
+```{r}
+
+na <- colSums(is.na(adult_df))
+na
+
+adult_df <- na.omit(adult_df)
+
+```
+
+우선 변수가 매우 많으므로 변수를 한 개씩 넣었을 때 aic가 작은 변수들을 몇 개 추려보자.
+
+```{r}
+set.seed(1234)
+
+temp <- adult_df %>%
+  initial_split(prop = 0.8)
+
+train <- temp %>%
+    training()
+  
+test <- temp %>%
+  testing()
+
+
+aic_vec <- c()
+for(i in colnames(adult_df)[-15]) {
+  formula <- str_c("salary ~ ", i)
+  fit <- glm(formula, family = binomial, data = train)
+  aic_vec <- c(aic_vec, fit$aic)
+}
+
+plot(aic_vec)
+```
+
+education, education_num, marital_status, occupation, relationship, capital_gain 이렇게 6개의 변수의 aic가 작음을 확인할 수 있다. 이들을 기본으로 넣고 나머지를 aic가 작은 순서대로 추가하는 방식을 생각해보자.  
+
+```{r}
+adult_df %>%
+  group_by(native_country) %>%
+  summarise(count = n())
+```
+
+한편, native_country는 level의 개수가 너무 많고 그 개수도 불균등하기 때문에 모델에서 제외시켰다.  
+
+```{r, warning = FALSE}
+
+max_ind <- c()
+
+formula <- c("salary ~ education + education_num + marital_status + occupation + relationship + capital_gain",
+             "salary ~ age + education + education_num + marital_status + occupation + relationship + capital_gain",
+             "salary ~ age + education + education_num + marital_status + occupation + relationship + sex + capital_gain",
+             "salary ~ age + education + education_num + marital_status + occupation + relationship + sex + capital_gain + hours_per_week",
+             "salary ~ age + workclass + education + education_num + marital_status + occupation + relationship + sex + capital_gain + hours_per_week",
+             "salary ~ age + workclass + education + education_num + marital_status + occupation + relationship + race + sex + capital_gain + hours_per_week",
+             "salary ~ age + workclass + fnlwgt + education + education_num + marital_status + occupation + relationship + race + sex + capital_gain + hours_per_week")
+
+fit_vec <- c()
+for(j in 1:7) {
+    fit <- list(glm(formula[j], family = binomial, data = train))
+    fit_vec <- c(fit_vec, fit)
+}
+
+for(j in 1:6) {
+  print(anova(fit_vec[[j]], fit_vec[[j+1]]))
+}
+
+```
+
+deviance를 비교했을 때 모든 모델이 H0를 기각하여 각 변수가 유의하다고 볼 수 있으나, practical한 관점에서 deviance가 적은 마지막 두 모델은 제외하기로 결정했다.  
+
+```{r, warning = FALSE}
+
+for(i in 1:100) {
+  temp <- adult_df %>%
+    initial_split(prop = 0.8)
+  
+  train <- temp %>%
+    training()
+  
+  test <- temp %>%
+    testing()
+  
+  acc <- c()
+  
+  for(j in 1:5) {
+    fit <- glm(formula[j], family = binomial, data = train)
+    pred_val <- predict.glm(fit, newdata = test)
+    val <- ifelse(exp(pred_val)/(1 + exp(pred_val)) > 0.5, ">50K", "<=50K")
+    tb1 <- table(real = test$salary, pred = val)
+    acc <- c(acc, accuracy(tb1))
+  }
+  
+  max_ind <- c(max_ind, which.max(acc))
+}
+```
+
+
+```{r}
+tb <- table(max_ind)
+mode_value <- as.numeric(names(tb)[which.max(tb)])
+mode_value
+
+fit <- glm(formula[mode_value], family = binomial, data = adult_df)
+pred_val <- predict.glm(fit, newdata = test)
+val <- ifelse(exp(pred_val)/(1 + exp(pred_val)) > 0.5, ">50K", "<=50K")
+tb1 <- table(real = test$salary, pred = val)
+acc <- accuracy(tb1)
+print(acc)
+```
+정확도는 0.848이 나온다. 
+
+```{r}
+adult_test <- read_csv("adult.test", col_names = FALSE, na = c("?", "NA"), skip = 1)
+colnames(adult_test) <- column_names
+colnames(adult_test)[15] <- "salary"
+adult_test <- adult_test %>%
+  map_df(convert_chr_to_fac, .x = .)
+
+adult_test <- adult_test %>%
+  mutate(workclass = fct_collapse(workclass, "government" = str_subset(levels(adult_test$workclass), "-gov$"),
+                                  "Self-emp" = str_subset(levels(adult_test$workclass), "^Self-emp"))) %>%
+  mutate(workclass = fct_lump_min(workclass, 20, other_level = "Other"))
+
+adult_test <- na.omit(adult_test)
+
+pred_val <- predict.glm(fit, newdata = adult_test)
+val <- ifelse(exp(pred_val)/(1 + exp(pred_val)) > 0.5, ">50K", "<=50K")
+tb1 <- table(real = adult_test$salary, pred = val)
+acc <- accuracy(tb1)
+print(acc)
+```
+정확도는 0.844 정도이다.  

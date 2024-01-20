@@ -1,0 +1,2142 @@
+---
+title: "finalproject_data_analysis"
+author: "HyeongHwan Kim"
+date: "2023-12-15"
+output: html_document
+---
+
+
+dataset 1: lasso linear regression (y ~ x2 + x5 + x7 + x9)  
+dataset 2: qda (y ~ x2 + x4 + x5 + x6 + x10)  
+dataset 3: polynomial regression (y ~ poly(x6, 3) + x7)  
+dataset 4: ridge linear regression (y ~ x5 + x7 + x9)  
+dataset 5: qda (y ~ x1 + x7 + x8 + x9)  
+dataset 6: ridge linear regression (y ~ x3 + x6 + x9)   
+dataset 7: negative binomial regression (y ~ x2 + x3 + x7 + x8 + x10)  
+dataset 8: linear model (y ~ x6 + x7 + x9 + x10)  
+dataset 9: ridge linear regression (y ~ x1 + x5 + x6 + x7)
+dataset 10: zero-inflated poisson regression (y ~ x1 + x2 + x4 + x5 + x7 + x8 + x9 + x10)  
+dataset 11: logistic regression (y ~ x2 + x3 + x5 + x9 + x10)  
+dataset 12: qda (y ~ x4 + x6)  
+dataset 13: naive bayes (y ~ x2 + x8)  
+dataset 14: lasso linear regression (y ~ x1 + x2 + x4 + x10 + x2*x10)  
+dataset 15: linear regresion (y ~ x4 + x5 + x6 + x8)  
+dataset 16: qda (y ~ x2 + x4 + x5 + x6 + x8 + x10 + x6*x8)
+dataset 17: lasso poisson regression  (y ~ x4 + x5 + x6 + x8 + x10)    
+dataset 18: linear regression (y ~ x2 + x6 + x7 + x8)  
+dataset 19: lasso linear regression (y ~ x6 + x7 + x9 + x7*x9)  
+dataset 20: negative binomial regression (y ~ x1 + x2 + x3 + x4 + x5 + x7 + x9)  
+
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(tidymodels)
+library(boot)
+library(leaps)
+library(caret)
+library(corrplot)
+library(glmnet)
+library(splines)
+library(gam)
+library(rlang)
+library(olsrr)
+library(MASS)
+library(pROC)
+library(ROCR)
+library(e1071)
+library(klaR)
+library(pscl)
+```
+
+```{r, message = FALSE}
+tr_full <- c()
+for(i in 1:20) {
+  tr_full <- c(tr_full, list(read_csv(str_c("dataset-1/dataset/dataset", i, "_train.csv"))[,2:12]))
+}
+te_full <- c()
+for(i in 1:20) {
+  te_full <- c(te_full, list(read_csv(str_c("dataset-1/dataset/dataset", i, "_test.csv"))[,2:11]))
+}
+```
+
+
+```{r}
+factorization <- function(df) {
+  df <- df %>%
+    mutate(x1 = factor(x1), x2 = factor(x2), x3 = factor(x3), x4 = factor(x4), x5 = factor(x5))
+  return(df)
+}
+
+df_split <- function(df) {
+  split_df <- df %>%
+    initial_split(prop = 0.8)
+  train <- split_df %>%
+    training()
+  valid <- split_df %>%
+    testing()
+  return(list(train, valid))
+}
+
+# df_cv_split <- function(df, K) {
+#   df_shuffled <- df[sample(nrow(df)), ]
+#   df_splits <- cut(seq(1, nrow(df)), breaks = K, labels = FALSE)
+# }
+
+draw_xy_plot <- function(df) {
+
+  for(x in colnames(df)[1:10]) {
+    if(str_detect(x, "[12345]$") == TRUE) {
+      vec <- factor(pull(df, x))
+      print(ggplot(data.frame(vec)) +
+        geom_boxplot(mapping = aes(x = vec, y = df$y)))
+    }
+    else {
+      print(ggplot(df) +
+        geom_point(mapping = aes(x = pull(df, x), y = df$y)))
+    }
+  }
+}
+
+draw_xy_plot_inter <- function(df) {
+  for(x in colnames(df)[6:10]) {
+    for(z in colnames(df)[1:5]) {
+      print(ggplot(df) +
+        geom_point(mapping = aes(x = pull(df, x), y = df$y, col = factor(pull(df, z)))))
+    }
+  }
+  
+  for(x in colnames(df)[6:10]) {
+    for(z in colnames(df)[6:10]) {
+      print(ggplot(df) +
+        geom_point(mapping = aes(x = pull(df, x), y = df$y, col = pull(df, z))) +
+         scale_color_gradient(low = "white", high = "black"))
+    }
+  }
+  
+}
+
+draw_xy_plot_bin <- function(df) {
+  df <- factorization(df)
+  df <- df %>%
+    mutate(y = factor(y))
+  for(x in colnames(df)[1:10]) {
+    if(str_detect(x, "[12345]$") == TRUE) {
+      vec <- factor(pull(df, x))
+      
+      print(table(x = pull(df, x), y = df$y))
+      
+      df_count <- df %>% 
+        group_by(!!sym(x), y) %>%
+        summarise(count = n())
+      
+      print(ggplot(df_count) +
+              geom_tile(mapping = aes(x = !!sym(x), y = y, fill = count)) +
+              scale_color_gradient(high = "black", low = "white"))
+    }
+    else {
+      print(ggplot(df) +
+        geom_point(mapping = aes(x = pull(df, x), y = df$y)))
+    }
+  }
+}
+
+draw_x_con_plot <- function(df) {
+
+  for(x in colnames(df)[6:10]) {
+    print(ggplot(df) +
+      geom_histogram(mapping = aes(x = pull(df, x))))
+  }
+}
+
+find_mode <- function(vec) {
+  tb <- table(vec)
+  return(names(tb)[which(tb == max(tb))][1])
+}
+
+return_prop <- function(model, df = NULL) {
+  if(is.null(df) == TRUE) {
+    pred <- predict(model)
+  } else {
+    pred <- predict(model, df) 
+  }
+  pred <- exp(pred) / (1 + exp(pred))
+  return(pred)
+}
+
+accuracy <- function(tb) {
+  return((tb[1, 1] + tb[2, 2])/sum(tb))
+}
+
+log_var_sel <- function(df, method) {
+  if(method == "backward") {
+    fit <- glm(y ~ ., family = binomial, data = df)
+    sel <- stepAIC(fit, direction = method)
+  } 
+  else if(method == "forward") {
+    fit <- glm(y ~ 1, family = binomial, data = df)
+    sel <- stepAIC(fit, direction = "forward", scope = list(lower = ~1, upper= ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10))
+  }
+  return(sel)
+}
+
+optimal_cut_log <- function(df, formula, k = 5) { # optimal_cut_log(tr_2, fit8$call)
+  
+  opt_vec <- vector("double", k)
+  index_list <- createFolds(df$y, k = k, list = TRUE)
+  grid <- seq(from = 0.25, to = 0.75, length = 100)
+
+  for(i in 1:k) {
+    valid_index <- index_list[[i]]
+    
+    train_2 <- df[-valid_index, ]
+    valid_2 <- df[valid_index, ]
+    
+    acc_vec <- vector("double", 100)
+    
+    fit <- glm(formula, data = train_2)
+    
+    for(j in 1:100) {
+      cutoff <- grid[j]
+      pred <- return_prop(fit, valid_2)
+      pred <- ifelse(pred >= cutoff, 1, 0)
+      acc_vec[[j]] <- accuracy(table(real = valid_2$y, pred = factor(pred, levels = c(1, 0))))
+    }
+    opt_vec[[i]] <- grid[which.min(acc_vec)]
+  }
+  opt_cutoff_log <- mean(opt_vec)
+  return(opt_cutoff_log)
+}
+
+return_bestlam <- function(df, method) {
+  X <-model.matrix(y ~ ., data = df)[, -1]
+  y <- df$y
+  if(method == "lasso") {
+    model <- cv.glmnet(X, y, family = binomial, alpha = 1, data = df)
+    best_lam <- model$lambda.min
+  } else if(method == "ridge") {
+    model <- cv.glmnet(X, y, family = binomial, alpha = 0, data = df)
+    best_lam <- model$lambda.min
+  }
+  return(best_lam)
+}
+
+
+optimal_cut_pen <- function(df, method, k = 5) {
+  opt_vec <- vector("double", k)
+  index_list <- createFolds(df$y, k = k, list = TRUE)
+  grid <- seq(from = 0.25, to = 0.75, length = 100)
+  
+  for(i in 1:k) {
+    valid_index <- index_list[[i]]
+    
+    train <- df[-valid_index, ]
+    valid <- df[valid_index, ]
+    
+    tr_X <- model.matrix(y ~ ., data = train)[, -1]
+    tr_y <- train$y
+    vl_X <- model.matrix(y ~ ., data = valid)[, -1]
+    vl_y <- valid$y
+    
+    acc_vec <- vector("double", 100)
+    
+    if(method == "lasso") {
+      lam <- return_bestlam(df, "lasso")
+      fit <- glmnet(tr_X, tr_y, family = binomial, alpha = 1, lambda = lam)
+      
+      
+    } else if(method == "ridge") {
+      lam <- return_bestlam(df, "ridge")
+      fit <- glmnet(tr_X, tr_y, family = binomial, alpha = 0, lambda = lam)
+    }
+    for(j in 1:100) {
+      cutoff <- grid[j]
+      pred <- predict(fit, s = lam, newx = vl_X, type = "response")
+      pred <- exp(pred) / (1 + exp(pred))
+      pred <- ifelse(pred >= cutoff, 1, 0)
+      acc_vec[[j]] <- accuracy(table(real = vl_y, pred = factor(pred, levels = c(1, 0))))
+    }
+
+    opt_vec[[i]] <- grid[which.min(acc_vec)]
+  }
+  return(mean(opt_vec))
+}
+
+log_acc <- function(df, formula) {
+  acc_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- glm(formula, data = train)
+    pred <-  return_prop(fit, test)
+    pred <- ifelse(pred >= opt_cutoff_log, 1, 0)
+    acc_vec[[i]] <- accuracy(table(real = test$y, pred = pred))
+  }
+  return(mean(acc_vec))
+}
+
+pen_acc <- function(df, method) {
+  acc_vec <- vector("double", 100)
+  
+  if(method == "lasso") {
+    lam <- return_bestlam(df, "lasso")
+    opt_cutoff <- optimal_cut_pen(df, "lasso")
+  } else if(method == "ridge") {
+    lam <- return_bestlam(df, "ridge")
+    opt_cutoff <- optimal_cut_pen(df, "ridge")
+  }
+  
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    tr_X <- model.matrix(y ~ ., data = train)[, -1]
+    vl_X <- model.matrix(y ~ ., data= test)[, -1]
+    
+    if(method == "lasso") {
+      fit <- glmnet(tr_X, train$y, family = binomial, alpha = 1, lambda = lam)
+    } else if(method == "ridge") {
+      fit <- glmnet(tr_X, train$y, family = binomial, alpha = 0, lambda = lam)
+    }
+    
+    pred <- predict(fit, s = lam, newx = vl_X, type = "response")
+    pred <- ifelse(pred >= opt_cutoff, 1, 0)
+    acc_vec[[i]] <- accuracy(table(real = test$y, pred = pred))
+  }
+  return(mean(acc_vec))
+}
+
+lda_acc <- function(df, formula) {
+  acc_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- lda(formula, data = train)
+    acc_vec[[i]] <- accuracy(table(real = test$y, pred = predict(fit, test)$class))
+  }
+  return(mean(acc_vec))
+}
+
+qda_acc <- function(df, formula) {
+  acc_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- qda(formula, data = train)
+    acc_vec[[i]] <- accuracy(table(real = test$y, pred = predict(fit, test)$class))
+  }
+  return(mean(acc_vec))
+}
+
+nav_acc <- function(df, formula) {
+  acc_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- naiveBayes(formula, data = train)
+    acc_vec[[i]] <- accuracy(table(real = test$y, pred = predict(fit, test)))
+  }
+  return(mean(acc_vec))
+}
+
+classification <- function(df, formula) {
+  acc <- c()
+  acc <- c(acc, log_acc(df, y ~ .))
+  acc <- c(acc, log_acc(df, formula))
+  acc <- c(acc, pen_acc(df, "ridge"))
+  acc <- c(acc, pen_acc(df, "lasso"))
+  acc <- c(acc, lda_acc(df, y ~ .))
+  acc <- c(acc, lda_acc(df, formula))
+  acc <- c(acc, qda_acc(df, y ~ .))
+  acc <- c(acc, qda_acc(df, formula))
+  acc <- c(acc, nav_acc(df, y ~ .))
+  acc <- c(acc, nav_acc(df, formula))
+  ind <- which.max(acc)
+  
+  return(case_when(ind == 1 ~ c(acc[ind], "full_logistic"), 
+                   ind == 2 ~ c(acc[ind], "sel_logistic"),
+                   ind == 3 ~ c(acc[ind], "ridge"),
+                   ind == 4 ~ c(acc[ind], "lasso"),
+                   ind == 5 ~ c(acc[ind], "full_lda"),
+                   ind == 6 ~ c(acc[ind], "sel_lda"),
+                   ind == 7 ~ c(acc[ind], "full_qda"),
+                   ind == 8 ~ c(acc[ind], "sel_qda"),
+                   ind == 9 ~ c(acc[ind], "full_naivebayes"),
+                   ind == 10 ~ c(acc[ind], "sel_naivebayes")))
+}
+
+classification_sel <- function(df, formula) {
+  acc <- c()
+  acc <- c(acc, log_acc(df, formula))
+  acc <- c(acc, pen_acc(df, "ridge"))
+  acc <- c(acc, pen_acc(df, "lasso"))
+  acc <- c(acc, lda_acc(df, formula))
+  acc <- c(acc, qda_acc(df, formula))
+  acc <- c(acc, nav_acc(df, formula))
+  ind <- which.max(acc)
+  
+  return(case_when(
+                   ind == 1 ~ c(acc[ind], "sel_logistic"),
+                   ind == 2 ~ c(acc[ind], "ridge"),
+                   ind == 3 ~ c(acc[ind], "lasso"),
+                   ind == 4 ~ c(acc[ind], "sel_lda"),
+                   ind == 5 ~ c(acc[ind], "sel_qda"),
+                   ind == 6 ~ c(acc[ind], "sel_naivebayes")))
+}
+
+classification_inter <- function(df, formula) {
+  acc <- c()
+  acc <- c(acc, log_acc(df, formula))
+  acc <- c(acc, pen_acc(df, "ridge"))
+  acc <- c(acc, pen_acc(df, "lasso"))
+  acc <- c(acc, lda_acc(df, formula))
+  acc <- c(acc, qda_acc(df, formula))
+  ind <- which.max(acc)
+  
+  return(case_when(
+                   ind == 1 ~ c(acc[ind], "sel_logistic"),
+                   ind == 2 ~ c(acc[ind], "ridge"),
+                   ind == 3 ~ c(acc[ind], "lasso"),
+                   ind == 4 ~ c(acc[ind], "sel_lda"),
+                   ind == 5 ~ c(acc[ind], "sel_qda")))
+}
+
+poi_var_sel <- function(df, method) {
+  if(method == "backward") {
+    fit <- glm(y ~ ., family = poisson(link = "log"), data = df)
+    sel <- stepAIC(fit, direction = method)
+  } 
+  else if(method == "forward") {
+    fit <- glm(y ~ 1, family = poisson(link = "log"), data = df)
+    sel <- stepAIC(fit, direction = "forward", scope = list(lower = ~1, upper= ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10))
+  }
+  return(sel)
+}
+
+poi_err <- function(df, formula) {
+  err_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- glm(formula, family = poisson(link = "log"), data = train)
+    pred <-  exp(predict(fit, test))
+    pred <- round(pred)
+    err_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(err_vec))
+}
+
+zero_err <- function(df, formula) {
+  err_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- zeroinfl(formula, data = train)
+    pred <- round(predict(fit, test))
+    err_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(err_vec))
+}
+
+nb_err <- function(df, formula) {
+  err_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- glm.nb(formula, data = train)
+    pred <- round(exp(predict(fit, test)))
+    err_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(err_vec))
+}
+
+return_bestlam_poi <- function(df, method, formula = y ~ .) {
+  X <-model.matrix(formula, data = df)[, -1]
+  y <- df$y
+  if(method == "lasso") {
+    model <- cv.glmnet(X, y, family = poisson(link = "log"), alpha = 1, data = df)
+    best_lam <- model$lambda.min
+  } else if(method == "ridge") {
+    model <- cv.glmnet(X, y, family = poisson(link = "log"), alpha = 0, data = df)
+    best_lam <- model$lambda.min
+  }
+  return(best_lam)
+}
+
+pen_poi_err <- function(df, method, formula = y ~ .) {
+  err_vec <- vector("double", 100)
+  
+  if(method == "lasso") {
+    lam <- return_bestlam_poi(df, "lasso", formula)
+  } else if(method == "ridge") {
+    lam <- return_bestlam_poi(df, "ridge", formula)
+  }
+  
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    tr_X <- model.matrix(formula, data = train)[, -1]
+    vl_X <- model.matrix(formula, data= test)[, -1]
+    
+    if(method == "lasso") {
+      fit <- glmnet(tr_X, train$y, family = poisson(link = "log"), alpha = 1, lambda = lam)
+    } else if(method == "ridge") {
+      fit <- glmnet(tr_X, train$y, family = poisson(link = "log"), alpha = 0, lambda = lam)
+    }
+    
+    pred <- round(predict(fit, s = lam, newx = vl_X, type = "response"))
+    err_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(err_vec))
+}
+
+count_model <- function(df, formula) {
+  err <- c()
+  err <- c(err, poi_err(df, y ~ .))
+  err <- c(err, poi_err(df, formula))
+  err <- c(err, pen_poi_err(df, "ridge"))
+  err <- c(err, pen_poi_err(df, "ridge", formula))
+  err <- c(err, pen_poi_err(df, "lasso"))
+  err <- c(err, pen_poi_err(df, "lasso", formula))
+  err <- c(err, zero_err(df, y ~ .))
+  err <- c(err, zero_err(df, formula))
+  err <- c(err, nb_err(df, y ~ .))
+  err <- c(err, nb_err(df, formula))
+  ind <- which.min(err)
+  
+  return(case_when(ind == 1 ~ c(err[ind], "full_poisson"), 
+                   ind == 2 ~ c(err[ind], "sel_poisson"),
+                   ind == 3 ~ c(err[ind], "full_ridge"),
+                   ind == 4 ~ c(err[ind], "sel_ridge"),
+                   ind == 5 ~ c(err[ind], "full_lasso"),
+                   ind == 6 ~ c(err[ind], "sel_lasso"),
+                   ind == 7 ~ c(err[ind], "full_zero"),
+                   ind == 8 ~ c(err[ind], "sel_zero"),
+                   ind == 9 ~ c(err[ind], "full_nb"),
+                   ind == 10 ~ c(err[ind], "sel_nb")))
+  
+}
+
+predict.reg <- function(object, newdata, id, ...) {
+  
+  form <- as.formula(object$call[[2]])
+  
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+}
+
+lm_err <- function(df, formula = y ~ .) {
+  err_vec <- vector("double", 100)
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    fit <- lm(formula, data = train)
+    pred <- predict(fit, test)
+    err_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(err_vec))
+}
+
+return_lm_bestlam <- function(df, method, formula) {
+  X <- model.matrix(formula, data = df)[, -1]
+  y <- df$y
+  if(method == "lasso") {
+    model <- cv.glmnet(X, y, alpha = 1, data = df)
+    best_lam <- model$lambda.min
+  } else if(method == "ridge") {
+    model <- cv.glmnet(X, y, alpha = 0, data = df)
+    best_lam <- model$lambda.min
+  }
+  return(best_lam)
+}
+
+pen_lm_err <- function(df, method, formula = y ~ .) {
+  
+  acc_vec <- vector("double", 100)
+  
+  if(method == "lasso") {
+    lam <- return_lm_bestlam(df, "lasso", formula)
+  } else if(method == "ridge") {
+    lam <- return_lm_bestlam(df, "ridge", formula)
+  }
+  
+  
+  for(i in 1:100) {
+    df_list <- df_split(df)
+    train <- df_list[[1]]
+    test <- df_list[[2]]
+    
+    tr_X <- model.matrix(formula, data = train)[, -1]
+    vl_X <- model.matrix(formula, data = test)[, -1]
+    
+    if(method == "lasso") {
+      fit <- glmnet(tr_X, train$y, alpha = 1, lambda = lam)
+    } else if(method == "ridge") {
+      fit <- glmnet(tr_X, train$y, alpha = 0, lambda = lam)
+    }
+    
+    pred <- predict(fit, s = lam, newx = vl_X, type = "response")
+    acc_vec[[i]] <- mean((pred - test$y)^2)
+  }
+  return(mean(acc_vec))
+}
+
+regression <- function(df, formula) {
+  err <- c()
+  err <- c(err, lm_err(df, formula))
+  err <- c(err, pen_lm_err(df, "ridge"))
+  err <- c(err, pen_lm_err(df, "ridge", formula))
+  err <- c(err, pen_lm_err(df, "lasso"))
+  err <- c(err, pen_lm_err(df, "lasso", formula))
+  ind <- which.min(err)
+  
+  return(case_when(
+                   ind == 1 ~ c(err[ind], "sel_lm"),
+                   ind == 2 ~ c(err[ind], "full_ridge"),
+                   ind == 3 ~ c(err[ind], "sel_ridge"),
+                   ind == 4 ~ c(err[ind], "full_lasso"),
+                   ind == 5 ~ c(err[ind], "sel_lasso")))
+} 
+
+loglinear <- function(df) {
+  for(x in colnames(df)[1:5]) {
+    for(z in colnames(df)[1:5]) {
+      if(x != z) {
+        vec1 <- pull(df, x)
+        vec2 <- pull(df, z)
+        fit1 <- glm(df$y ~ vec1 + vec2 + vec1 * vec2, family = poisson())
+        fit2 <- glm(df$y ~ vec1 + vec2, family = poisson())
+        anv <- anova(fit2, fit1)
+        if(1 - pchisq(anv$Deviance[2], 1) < 0.05)
+          print(c(x, z))
+      }
+    }
+  }
+}
+
+loglinear(tr_2)
+loglinear(tr_5)
+loglinear(tr_11)
+loglinear(tr_12)
+loglinear(tr_13)
+loglinear(tr_16)
+
+```
+
+
+
+# dataset 2  
+
+```{r}
+tr_2 <- tr_full[[2]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_2)
+```
+
+```{r}
+draw_xy_plot_inter(tr_2)
+```
+
+
+## variable selection, logistic selection
+
+```{r}
+fit6 <- glm(y ~ ., family = binomial, data = tr_2)
+bacw <- stepAIC(fit6, direction = "backward")
+bacw
+```
+```{r}
+fit7 <- glm(y ~ 1, family = binomial, data = tr_2)
+forw <- stepAIC(fit7, direction = "forward", scope = list(lower = ~1, upper= ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10))
+forw
+```
+
+```{r, message = FALSE}
+
+k <- 5
+opt_vec <- vector("double", k)
+index_list <- createFolds(tr_2$y, k = k, list = TRUE)
+grid <- seq(from = 0.25, to = 0.75, length = 100)
+
+for(i in 1:k) {
+  valid_index <- index_list[[i]]
+  
+  train_2 <- tr_2[-valid_index, ]
+  valid_2 <- tr_2[valid_index, ]
+  
+  acc_vec <- vector("double", 100)
+  
+  fit8 <- glm(y ~ x2 + x4 + x5 + x6 + x10, data = train_2)
+  
+  for(j in 1:100) {
+    cutoff <- grid[j]
+    pred <- return_prop(fit8, valid_2)
+    pred <- ifelse(pred >= cutoff, 1, 0)
+    acc_vec[[j]] <- accuracy(table(real = valid_2$y, pred = factor(pred, levels = c(1, 0))))
+  }
+  opt_vec[[i]] <- grid[which.min(acc_vec)]
+}
+opt_cutoff_log <- mean(opt_vec)
+```
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit8 <- glm(y ~ x2 + x4 + x5 + x6 + x10, data = train_2)
+  pred <-  return_prop(fit8, test_2)
+  pred <- ifelse(pred >= opt_cutoff_log, 1, 0)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = pred))
+}
+mean(acc_vec)
+```
+
+## penalized logistic regression
+### ridge
+
+```{r}
+X <- model.matrix(y ~ ., data = tr_2)[, -1]
+y <- tr_2$y
+ridge.model = cv.glmnet(X, y, family = binomial, alpha = 0, data = tr_2)
+lasso.model = cv.glmnet(X, y, family = binomial, alpha = 1, data = tr_2)
+best_lam_rid <- ridge.model$lambda.min
+best_lam_las <- lasso.model$lambda.min
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+
+k <- 5
+opt_vec <- vector("double", k)
+index_list <- createFolds(tr_2$y, k = k, list = TRUE)
+grid <- seq(from = 0.25, to = 0.75, length = 100)
+
+for(i in 1:k) {
+  valid_index <- index_list[[i]]
+  
+  train_2 <- tr_2[-valid_index, ]
+  valid_2 <- tr_2[valid_index, ]
+  
+  tr_X <- model.matrix(y ~ ., data = train_2)[, -1]
+  tr_y <- train_2$y
+  vl_X <- model.matrix(y ~ ., data = valid_2)[, -1]
+  vl_y <- valid_2$y
+  
+  acc_vec <- vector("double", 99)
+  
+  fit9 <- glmnet(tr_X, tr_y, family = binomial, alpha = 0, lambda = best_lam_rid)
+  
+  for(j in 1:100) {
+    cutoff <- grid[j]
+    pred <- predict(fit9, s = best_lam_rid, newx = vl_X, type = "response")
+    pred <- exp(pred) / (1 + exp(pred))
+    pred <- ifelse(pred >= cutoff, 1, 0)
+    acc_vec[[j]] <- accuracy(table(real = vl_y, pred = factor(pred, levels = c(1, 0))))
+  }
+  opt_vec[[i]] <- grid[which.min(acc_vec)]
+}
+opt_cutoff_rid <- mean(opt_vec)
+```
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  tr_X <- model.matrix(y ~ ., data = train_2)[, -1]
+  vl_X <- model.matrix(y ~ ., data= test_2)[, -1]
+  
+  fit9 <- glmnet(X, y, family = binomial, alpha = 0, lambda = best_lam_rid)
+  pred <- predict(fit9, s = best_lam_rid, newx = vl_X, type = "response")
+  pred <- ifelse(pred >= opt_cutoff_rid, 1, 0)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = pred))
+}
+mean(acc_vec)
+```
+
+```{r, warning = FALSE, message = FALSE}
+k <- 5
+opt_vec <- vector("double", k)
+index_list <- createFolds(tr_2$y, k = k, list = TRUE)
+grid <- seq(from = 0.25, to = 0.75, length = 100)
+
+for(i in 1:k) {
+  valid_index <- index_list[[i]]
+  
+  train_2 <- tr_2[-valid_index, ]
+  valid_2 <- tr_2[valid_index, ]
+  
+  tr_X <- model.matrix(y ~ ., data = train_2)[, -1]
+  tr_y <- train_2$y
+  vl_X <- model.matrix(y ~ ., data = valid_2)[, -1]
+  vl_y <- valid_2$y
+  
+  acc_vec <- vector("double", 99)
+  
+  fit9 <- glmnet(tr_X, tr_y, family = binomial, alpha = 1, lambda = best_lam_las)
+  
+  for(j in 1:100) {
+    cutoff <- grid[j]
+    pred <- predict(fit9, s = best_lam_las, newx = vl_X, type = "response")
+    pred <- exp(pred) / (1 + exp(pred))
+    pred <- ifelse(pred >= cutoff, 1, 0)
+    acc_vec[[j]] <- accuracy(table(real = vl_y, pred = factor(pred, levels = c(1, 0))))
+  }
+  opt_vec[[i]] <- grid[which.min(acc_vec)]
+}
+opt_cutoff_las <- mean(opt_vec)
+```
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  tr_X <- model.matrix(y ~ ., data = train_2)[, -1]
+  vl_X <- model.matrix(y ~ ., data= test_2)[, -1]
+  
+  fit9 <- glmnet(X, y, family = binomial, alpha = 1, lambda = best_lam_las)
+  pred <- predict(fit9, s = best_lam_las, newx = vl_X, type = "response")
+  pred <- ifelse(pred >= opt_cutoff_las, 1, 0)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = pred))
+}
+mean(acc_vec)
+```
+## lda, qda  
+### lda
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- lda(y ~ x2 + x4 + x5 + x6 + x10, data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)$class))
+}
+mean(acc_vec)
+```
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- lda(y ~ ., data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)$class))
+}
+mean(acc_vec)
+```
+### qda
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- qda(y ~ x2 + x4 + x5 + x6 + x10, data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)$class))
+}
+mean(acc_vec)
+```
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- qda(y ~ ., data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)$class))
+}
+mean(acc_vec)
+```
+### naive_bayes  
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- naiveBayes(y ~ x2 + x4 + x5 + x6 + x10, data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)))
+}
+mean(acc_vec)
+```
+
+```{r}
+acc_vec <- vector("double", 100)
+for(i in 1:100) {
+  tr_2_list <- df_split(tr_2)
+  train_2 <- tr_2_list[[1]]
+  test_2 <- tr_2_list[[2]]
+  
+  fit10 <- naiveBayes(y ~ ., data = train_2)
+  acc_vec[[i]] <- accuracy(table(real = test_2$y, pred = predict(fit10, test_2)))
+}
+mean(acc_vec)
+```
+## final model  
+
+```{r}
+classification(tr_2, y ~ x2 + x4 + x5 + x6 + x10)
+```
+
+```{r}
+model_2 <- qda(y ~ x2 + x4 + x5 + x6 + x10, data = tr_2)
+
+te_2 <- te_full[[2]]
+pred_2 <- as.vector(predict(model_2, te_2)$class)
+pred_2
+```
+
+# dataset 5  
+
+```{r}
+tr_5 <- tr_full[[5]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_5)
+```
+
+```{r}
+draw_xy_plot_inter(tr_5)
+```
+
+```{r}
+log_var_sel(tr_5, "forward")
+```
+```{r}
+log_var_sel(tr_5, "backward")
+```
+
+```{r}
+classification(tr_5, y ~ x1 + x7 + x8 + x9)
+```
+
+```{r}
+model_5 <- qda(y ~ x1 + x7 + x8 + x9, data = tr_5)
+
+te_5 <- te_full[[5]]
+pred_5 <- as.vector(predict(model_5, te_5)$class)
+```
+
+
+# dataset 11  
+
+```{r}
+tr_11 <- tr_full[[11]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_11)
+```
+
+```{r}
+draw_xy_plot_inter(tr_11)
+```
+
+```{r}
+log_var_sel(tr_11, "forward")
+```
+```{r}
+log_var_sel(tr_11, "backward")
+```
+```{r}
+classification(tr_11, y ~ x2 + x3 + x5 + x9 + x10)
+```
+```{r}
+
+model_11 <- glm(y ~ x2 + x3 + x5 + x9 + x10, family = binomial, data = tr_11)
+cutf <- optimal_cut_log(tr_11, y ~ x2 + x3 + x5 + x9 + x10)
+
+te_11 <- te_full[[11]]
+pred_11 <- predict(model_11, te_11)
+pred_11 <- exp(pred_11) / (1+exp(pred_11))
+pred_11 <- ifelse(pred_11 >= cutf, 1, 0)
+pred_11 <- as.vector(pred_11)
+```
+
+# dataset 12  
+
+```{r}
+tr_12 <- tr_full[[12]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_12)
+```
+
+```{r}
+draw_xy_plot_inter(tr_12)
+```
+
+```{r}
+log_var_sel(tr_12, "forward")
+```
+```{r}
+log_var_sel(tr_12, "backward")
+```
+```{r}
+classification(tr_12, y ~ x4 + x6)
+```
+
+```{r}
+classification_inter(tr_12, y ~ x4 * x6)
+```
+
+```{r}
+model_12 <- qda(y ~ x4 + x6, data = tr_12)
+
+te_12 <- te_full[[12]]
+pred_12 <- as.vector(predict(model_12, te_12)$class)
+```
+
+# dataset 13  
+
+```{r}
+tr_13 <- tr_full[[13]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_13)
+```
+
+```{r}
+draw_xy_plot_inter(tr_13)
+```
+
+```{r}
+tr_fac_13 <- factorization(tr_13)
+```
+
+```{r}
+log_var_sel(tr_fac_13, "forward")
+```
+```{r}
+log_var_sel(tr_fac_13, "backward")
+```
+```{r}
+classification_sel(tr_13, y ~ x2 + x8)
+```
+```{r}
+model_13 <- naiveBayes(y ~ x2 + x8, data = tr_13)
+
+te_13 <- te_full[[13]]
+pred_13 <- as.vector(predict(model_13, te_13))
+```
+
+# dataset 16  
+
+```{r}
+tr_16 <- tr_full[[16]]
+```
+
+```{r}
+draw_xy_plot_bin(tr_16)
+```
+
+```{r}
+draw_xy_plot_inter(tr_16)
+```
+
+```{r}
+
+fit <- glm(y ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x6*x8, family = binomial, data = tr_16)
+sel <- stepAIC(fit, direction = "backward")
+sel
+
+fit <- glm(y ~ 1, family = binomial, data = tr_16)
+sel <- stepAIC(fit, direction = "forward", scope = list(lower = ~1, upper= ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x6*x8))
+sel
+```
+
+
+```{r}
+log_var_sel(tr_16, "forward")
+```
+
+```{r}
+log_var_sel(tr_16, "backward")
+```
+
+```{r}
+classification_inter(tr_16, y ~ x2 + x4 + x5 + x6 + x8 + x10 + x6*x8)
+```
+
+
+```{r}
+classification(tr_16, y ~ x2 + x3 + x4 + x5 + x6 + x10)
+```
+
+```{r}
+model_16 <- qda(y ~ x2 + x4 + x5 + x6 + x8 + x10 + x6*x8, tr_16)
+
+te_16 <- te_full[[16]]
+pred_16 <- as.vector(predict(model_16, te_16)$class)
+```
+
+
+# dataset 7  
+
+```{r}
+tr_7 <- tr_full[[7]]
+```
+
+```{r}
+draw_xy_plot(tr_7)
+```
+
+```{r}
+ggplot(tr_7) +
+  geom_histogram(mapping = aes(x = y))
+```
+
+```{r}
+tr_fac_7 <- factorization(tr_7)
+```
+
+
+## Poisson  
+
+```{r}
+poi_var_sel(tr_fac_7, "forward")
+```
+```{r}
+poi_var_sel(tr_fac_7, "backward")
+```
+
+```{r}
+poi_err(tr_fac_7, y ~ x2 + x3 + x7 + x8 + x10)
+```
+```{r}
+pen_poi_err(tr_fac_7, "lasso")
+```
+
+```{r}
+pen_poi_err(tr_fac_7, "lasso", y ~ x2 + x3 + x7 + x8 + x10)
+```
+```{r}
+pen_poi_err(tr_fac_7, "ridge")
+```
+```{r}
+pen_poi_err(tr_fac_7, "ridge", y ~ x2 + x3 + x7 + x8 + x10)
+```
+
+
+## zero-inflated  
+
+```{r}
+zero_err(tr_fac_7, y ~ x2 + x3 + x7 + x8 + x10)
+```
+
+
+## negative-binomial  
+
+```{r}
+nb_err(tr_fac_7, y ~ x2 + x3 + x7 + x8 + x10)
+```
+
+```{r}
+count_model(tr_fac_7, y ~ x2 + x3 + x7 + x8 + x10)
+```
+
+```{r}
+model_7 <- glm.nb(y ~ x2 + x3 + x7 + x8 + x10, data = tr_fac_7)
+
+te_7 <- te_full[[7]]
+te_fac_7 <- factorization(te_7)
+pred_7 <- as.vector(round(exp(predict(model_7, te_fac_7))))
+```
+
+
+# dataset 10  
+
+```{r}
+tr_10 <- tr_full[[10]]
+```
+
+```{r}
+draw_xy_plot(tr_10)
+```
+
+```{r}
+draw_x_con_plot(tr_10)
+```
+
+
+```{r}
+ggplot(tr_10) +
+  geom_histogram(mapping = aes(x = y))
+```
+
+```{r}
+poi_var_sel(tr_10, "forward")
+```
+
+```{r}
+poi_var_sel(tr_10, "backward")
+```
+```{r}
+count_model(tr_10, y ~ x1 + x2 + x4 + x5 + x7 + x8 + x9 + x10)
+```
+
+```{r}
+count_model(tr_10, y ~ x1 + x2 + x5 + x7 + x8 + x9 + x10)
+```
+```{r}
+model_10 <- zeroinfl(y ~ x1 + x2 + x4 + x5 + x7 + x8 + x9 + x10, data = tr_10)
+
+te_10 <- te_full[[10]]
+pred_10 <- as.vector(round(predict(model_10, te_10)))
+```
+
+
+# dataset 17  
+
+```{r}
+tr_17 <- tr_full[[17]]
+```
+
+```{r}
+draw_xy_plot(tr_17)
+```
+
+```{r}
+draw_x_con_plot(tr_17)
+```
+
+```{r}
+ggplot(tr_17) +
+  geom_histogram(mapping = aes(x = y))
+```
+
+```{r}
+poi_var_sel(tr_17, "forward")
+```
+```{r}
+poi_var_sel(tr_17, "backward")
+```
+```{r, message = FALSE}
+count_model(tr_17, y ~ x4 + x5 + x6 + x8 + x10)
+```
+```{r}
+X <- model.matrix(y ~ x4 + x5 + x6 + x8 + x10, data = tr_17)[, -1]
+lam <- return_bestlam_poi(tr_17, "lasso", y ~ x4 + x5 + x6 + x8 + x10)
+model_17 <- glmnet(X, tr_17$y, family = poisson(link = "log"), alpha = 1, lambda = lam)
+
+te_17 <- te_full[[17]]
+te_X <- model.matrix(~ x4 + x5 + x6 + x8 + x10, data = te_17)[, -1]
+pred_17 <- as.vector(round(predict(model_17, s = lam, newx = te_X, type = "response")))
+```
+
+
+# dataset 20  
+
+```{r}
+tr_20 <- tr_full[[20]]
+```
+
+```{r}
+draw_xy_plot(tr_20)
+```
+
+```{r}
+draw_x_con_plot(tr_20)
+```
+
+```{r}
+ggplot(tr_20) +
+  geom_histogram(mapping = aes(x = y))
+```
+```{r}
+poi_var_sel(tr_20, "forward")
+```
+
+```{r}
+poi_var_sel(tr_20, "backward")
+```
+```{r}
+count_model(tr_20, y ~ x1 + x2 + x3 + x4 + x5 + x7 + x9)
+```
+
+```{r}
+model_20 <- glm.nb(y ~ x1 + x2 + x3 + x4 + x5 + x7 + x9, tr_20)
+
+te_20 <- te_full[[20]]
+pred_20 <- as.vector(round(exp(predict(model_20, te_20))))
+```
+
+
+# dataset 1  
+
+```{r}
+tr_1 <- tr_full[[1]]
+```
+
+```{r}
+k <- 5
+n <- nrow(tr_1)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_1[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_1[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_1$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+summary(best.fit)
+find_mode(min_ind)
+```
+
+```{r}
+tr_fac_1 <- factorization(tr_1)
+k <- 5
+n <- nrow(tr_fac_1)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_fac_1[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_1[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_1$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+find_mode(min_ind)
+summary(best.fit)
+
+```
+
+```{r}
+regression(tr_1, y ~ x2 + x5 + x7 + x9)
+```
+```{r}
+regression(tr_fac_1, y ~ x2 + x5 + x7 + x9)
+```
+
+```{r}
+lam <- return_lm_bestlam(tr_1, "lasso", y ~ x2 + x5 + x7 + x9)
+X <- model.matrix(y ~ x2 + x5 + x7 + x9, data = tr_1)[, -1]
+model_1 <- glmnet(X, tr_1$y, alpha = 1, lambda = lam)
+
+te_1 <- te_full[[1]]
+te_X <- model.matrix(~ x2 + x5 + x7 + x9, data = te_1)[, -1]
+pred_1 <- as.vector(predict(model_1, te_X))
+```
+
+
+# dataset 4  
+
+```{r}
+tr_4 <- tr_full[[4]]
+```
+
+```{r}
+draw_xy_plot(tr_4)
+```
+
+```{r}
+draw_x_con_plot(tr_4)
+```
+
+
+```{r}
+ggplot(tr_4) +
+  geom_histogram(mapping = aes(x = y))
+```
+```{r}
+k <- 5
+n <- nrow(tr_4)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_4[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_4[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_4$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+summary(best.fit)
+find_mode(min_ind)
+```
+
+```{r}
+k <- 5
+tr_fac_4 <- factorization(tr_4)
+n <- nrow(tr_fac_4)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_fac_4[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_4[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_4$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+
+```{r}
+regression(tr_4, y ~ x5 + x7 + x9)
+```
+
+```{r}
+regression(tr_fac_4, y ~ x5 + x7 + x9)
+```
+
+```{r}
+lam <- return_lm_bestlam(tr_fac_4, "ridge", y ~ x5 + x7 + x9)
+X <- model.matrix(y ~ x5 + x7 + x9, data = tr_fac_4)[, -1]
+model_4 <- glmnet(X, tr_fac_4$y, alpha = 0, lambda = lam)
+
+te_4 <- te_full[[4]]
+te_fac_4 <- factorization(te_4)
+te_X <- model.matrix(~ x5 + x7 + x9, data = te_fac_4)[, -1]
+pred_4 <- predict(model_4, te_X)
+```
+
+
+# dataset 6  
+
+```{r}
+tr_6 <-  tr_full[[6]]
+```
+
+```{r}
+draw_xy_plot(tr_6)
+```
+
+```{r, message = FALSE}
+draw_xy_plot_inter(tr_6)
+```
+
+
+```{r}
+k <- 5
+n <- nrow(tr_6)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_6[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_6[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_6$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+summary(best.fit)
+find_mode(min_ind)
+```
+
+```{r}
+regression(tr_6, y ~ x3 + x9)
+```
+
+```{r}
+regression(tr_6, y ~ x3 + x6 + x9)
+```
+
+
+```{r}
+lam <- return_lm_bestlam(tr_6, "ridge", y ~ x3 + x6 + x9)
+X <- model.matrix(y ~ x3 + x6 + x9, data = tr_6)[, -1]
+model_6 <- glmnet(X, tr_6$y, alpha = 0, lambda = lam)
+
+te_6 <- te_full[[6]]
+te_X <- model.matrix(~ x3 + x6 + x9, data = te_6)[, -1]
+pred_6 <- predict(model_6, te_X)
+```
+
+
+# dataset 8  
+
+```{r}
+tr_8 <- tr_full[[8]]
+```
+
+```{r}
+draw_xy_plot(tr_8)
+```
+
+```{r}
+draw_x_con_plot(tr_8)
+```
+
+```{r}
+draw_xy_plot_inter(tr_8)
+```
+
+```{r}
+cor_mat <- cor(tr_8)
+corrplot(cor_mat)
+```
+
+
+```{r}
+k <- 5
+n <- nrow(tr_8)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_8[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_8[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_8$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+summary(best.fit)
+find_mode(min_ind)
+```
+```{r}
+regression(tr_8, y ~ x6 + x7 + x9 + x10)
+```
+```{r}
+model_8 <- lm(y ~ x6 + x7 + x9 + x10, tr_8)
+
+te_8 <- te_full[[8]]
+pred_8 <- predict(model_8, te_8)
+```
+
+# dataset 9  
+
+```{r}
+tr_9 <- tr_full[[9]]
+```
+
+```{r}
+draw_xy_plot(tr_9)
+```
+
+```{r}
+draw_x_con_plot(tr_9)
+```
+
+```{r}
+draw_xy_plot_inter(tr_9)
+```
+
+```{r}
+k <- 5
+n <- nrow(tr_9)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_9[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_9[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_9$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+k <- 5
+tr_fac_9 <- factorization(tr_9)
+n <- nrow(tr_fac_9)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_fac_9[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_9[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_9$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+regression(tr_9, y ~ x1 + x5 + x6 + x7)
+```
+
+```{r}
+regression(tr_fac_9, y ~ x1 + x5 + x6 + x7)
+```
+
+```{r}
+lam <- return_lm_bestlam(tr_9, "ridge", y ~ x1 + x5 + x6 + x7)
+X <- model.matrix(y ~ x1 + x5 + x6 + x7, data = tr_9)[, -1]
+model_9 <- glmnet(X, tr_9$y, alpha = 0, lambda = lam)
+
+te_9 <- te_full[[9]]
+te_X <- model.matrix(~ x1 + x5 + x6 + x7, data = te_9)[, -1]
+pred_9 <- predict(model_9, te_X)
+```
+
+# dataset 14  
+
+```{r}
+tr_14 <- tr_full[[14]]
+```
+
+```{r}
+draw_xy_plot(tr_14)
+```
+
+```{r}
+draw_x_con_plot(tr_14)
+```
+
+```{r}
+draw_xy_plot_inter(tr_14)
+```
+
+x1과 x10이 interaction  
+
+```{r}
+cor_mat <- cor(tr_14)
+corrplot(cor_mat)
+```
+
+
+```{r}
+k <- 5
+n <- nrow(tr_14)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x1*x10 + x2*x10, data = tr_14[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_14[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_14$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+k <- 5
+tr_fac_14 <- factorization(tr_14)
+n <- nrow(tr_fac_14)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x1*x10 + x2*x10, data = tr_fac_14[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_14[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_14$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+regression(tr_14, y ~ x1 + x2 + x4 + x10 + x2*x10)
+```
+
+```{r}
+regression(tr_fac_14, y ~ x1 + x2 + x4 + x10 + x2*x10)
+```
+
+```{r}
+lam <- return_lm_bestlam(tr_14, "lasso", y ~ x1 + x2 + x4 + x10 + x2*x10)
+X <- model.matrix(y ~ x1 + x2 + x4 + x10 + x2*x10, data = tr_14)[, -1]
+model_14 <- glmnet(X, tr_14$y, alpha = 1, lambda = lam)
+
+te_14 <- te_full[[14]]
+te_X <- model.matrix(~ x1 + x2 + x4 + x10 + x2*x10, data = te_14)[, -1]
+pred_14 <- predict(model_14, te_X)
+```
+
+# dataset 15  
+
+```{r}
+tr_15 <- tr_full[[15]]
+```
+
+```{r}
+draw_xy_plot(tr_15)
+```
+
+```{r}
+draw_x_con_plot(tr_15)
+```
+
+```{r}
+draw_xy_plot_inter(tr_15)
+```
+
+```{r}
+k <- 5
+n <- nrow(tr_15)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_15[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_15[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_15$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+
+```{r}
+k <- 5
+tr_fac_15 <- factorization(tr_15)
+n <- nrow(tr_15)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_fac_15[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_15[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_15$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+
+```{r}
+regression(tr_15, y ~ x5 + x6 + x8 + x9)
+```
+```{r}
+regression(tr_fac_15, y ~ x4 + x5 + x6 + x8)
+```
+
+```{r}
+model_15 <- lm(y ~ x4 + x5 + x6 + x8, tr_fac_15)
+
+te_15 <- te_full[[15]]
+te_fac_15 <- factorization(te_15)
+pred_15 <- predict(model_15, te_fac_15)
+```
+
+# dataset 18
+
+```{r}
+tr_18 <- tr_full[[18]]
+```
+
+```{r}
+draw_xy_plot(tr_18)
+```
+
+```{r}
+draw_x_con_plot(tr_18)
+```
+
+```{r}
+draw_xy_plot_inter(tr_18)
+```
+
+```{r}
+cor_mat <- cor(tr_18)
+corrplot(cor_mat)
+```
+
+
+```{r}
+k <- 5
+n <- nrow(tr_18)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x6 * x7, data = tr_18[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_18[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_18$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+
+```{r}
+k <- 5
+tr_fac_18 <- factorization(tr_18)
+n <- nrow(tr_18)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ ., data = tr_fac_18[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_fac_18[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_fac_18$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+regression(tr_18, y ~ x2 + x6 + x7 + x8)
+```
+
+```{r}
+regression(tr_fac_18, y ~ x2 + x6 + x7 + x8)
+```
+```{r}
+model_18 <- lm(y ~ x2 + x6 + x7 + x8, tr_18)
+
+te_18 <- te_full[[18]]
+pred_18 <- predict(model_18, te_18)
+```
+
+# dataset 19  
+
+```{r}
+tr_19 <- tr_full[[19]]
+```
+
+```{r}
+draw_xy_plot(tr_19)
+```
+
+```{r}
+draw_x_con_plot(tr_19)
+```
+
+```{r}
+draw_xy_plot_inter(tr_19)
+```
+
+```{r}
+cor_mat <- cor(tr_19)
+corrplot(cor_mat)
+```
+
+
+```{r}
+k <- 5
+n <- nrow(tr_19)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x7 * x9, data = tr_19[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_19[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_19$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+
+```{r}
+regression(tr_19, y ~ x6 + x7 + x9 + x7*x9)
+```
+
+```{r}
+lam <- return_lm_bestlam(tr_19, "lasso", y ~ x6 + x7 + x9 + x7*x9)
+X <- model.matrix(y ~ x6 + x7 + x9 + x7*x9, data = tr_19)[, -1]
+model_19 <- glmnet(X, tr_19$y, alpha = 1, lambda = lam)
+
+te_19 <- te_full[[19]]
+te_X <- model.matrix(~x6 + x7 + x9 + x7*x9, data = te_19)[, -1]
+pred_19 <- predict(model_19, te_X)
+```
+
+# dataset 3  
+
+```{r}
+tr_3 <- tr_full[[3]]
+```
+
+```{r}
+draw_xy_plot(tr_3)
+```
+
+```{r}
+draw_x_con_plot(tr_3)
+```
+
+```{r}
+ggplot(tr_3) +
+  geom_histogram(mapping = aes(x = y))
+```
+```{r}
+err_vec <- vector("double", 100)
+for(i in 1:100) {
+  glm_mod <- glm(y ~ poly(x6, 2), data = tr_3)
+  mod1 <- cv.glm(tr_3, glm_mod, K = 5)
+  err_vec[[i]] <- mod1$delta[1]
+}
+mean(err_vec)
+```
+
+```{r}
+err_vec <- vector("double", 100)
+for(i in 1:100) {
+  glm_mod <- glm(y ~ poly(x6, 3), data = tr_3)
+  mod1 <- cv.glm(tr_3, glm_mod, K = 5)
+  err_vec[[i]] <- mod1$delta[1]
+}
+mean(err_vec)
+```
+
+```{r}
+err_vec <- vector("double", 100)
+for(i in 1:100) {
+  glm_mod <- glm(y ~ poly(x6, 4), data = tr_3)
+  mod1 <- cv.glm(tr_3, glm_mod, K = 5)
+  err_vec[[i]] <- mod1$delta[1]
+}
+mean(err_vec)
+```
+
+```{r}
+k <- 5
+n <- nrow(tr_3)
+
+min_ind <- vector("integer", 100)
+
+for(a in 1:100) {
+  folds <- sample(rep(1:k, length = n))
+  cv.errors <- matrix(NA, k, 10, dimnames = list(NULL, paste(1:10)))
+  for (j in 1:k) {
+    best.fit <- regsubsets(y ~ x1 + x2 + x3 + x4 + x5 + poly(x6, 3) + x7 + x8 + x9 + x10, data = tr_3[folds != j, ], nvmax = 10)
+
+    for (i in 1:10) {
+      pred <- predict.reg(best.fit, tr_3[folds == j, ], id = i)
+      cv.errors[j, i] <-mean((tr_3$y[folds == j] - pred)^2)
+    }
+  }
+  mean.cv.errors <- apply(cv.errors, 2, mean)
+  min_ind[[a]] <- which.min(mean.cv.errors)
+}
+
+find_mode(min_ind)
+summary(best.fit)
+```
+```{r}
+regression(tr_3, y ~ poly(x6, 3) + x7)
+```
+
+```{r}
+regression(tr_3, y ~ poly(x6, 3) + x7 + x10)
+```
+```{r}
+regression(tr_3, y ~ x4 + poly(x6, 3) + x7 + x10)
+```
+```{r}
+err_vec <- vector("double", 100)
+for(i in 1:100) {
+  gam_mod <- gam(y ~ bs(x6, df= 5), data = tr_3)
+  mod1 <- cv.glm(tr_3, gam_mod, K = 5)
+  err_vec[[i]] <- mod1$delta[1]
+}
+mean(err_vec)
+```
+
+```{r}
+opt_df <- vector("double", 100)
+grid <- 5:13
+for(i in 1:100) {
+  err_vec <- vector("double", length(grid))
+  for(j in 1:length(grid)) {
+    gam_mod <- gam(y ~ ns(x6, df= grid[j]), data = tr_3)
+    mod1 <- cv.glm(tr_3, gam_mod, K = 5)
+    err_vec[[j]] <- mod1$delta[1]
+  }
+  opt_df[[i]] <- grid[which.min(err_vec)]
+}
+opt_df
+find_mode(opt_df)
+```
+
+```{r}
+err_vec <- vector("double", 100)
+for(i in 1:100) {
+  fit <- gam(y ~ ns(x6, df = 10) + x7, data = tr_3)
+  mod1 <- cv.glm(tr_3, fit, K = 5)
+  
+  err_vec[[i]] <- mod1$delta[1]
+}
+mean(err_vec)
+```
+
+
+```{r}
+model_3 <- lm(y ~ poly(x6, 3) + x7, tr_3)
+
+te_3 <- te_full[[3]]
+pred_3 <- predict(model_3, te_3)
+```
+
+
+
+```{r}
+pred <- cbind(pred_1, pred_2, pred_3, pred_4, pred_5, pred_6, pred_7, pred_8, pred_9, pred_10, pred_11, pred_12, pred_13, pred_14, pred_15, pred_16, pred_17, pred_18, pred_19, pred_20)
+write.csv(pred, 'pred.csv')
+```
+
+
+
