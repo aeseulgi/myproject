@@ -1,0 +1,305 @@
+---
+title: "Session 02 - 2: R Markdown"
+author: "326.212 전산통계 및 실험"
+institute: "서울대학교 통계학과"
+output: 
+  html_document:
+    keep_md: true
+bibliography: refs.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=TRUE)
+```
+
+
+# Introduction
+
+An R Markdown (`.Rmd`) file is a record of your research. It contains the code that a scientist needs to reproduce your work along with the narration that a reader needs to understand your work.
+
+You can easily rerun the code in an R Markdown file to reproduce your work and export the results as a nicely formatted report in a variety of formats, including `html` and `pdf`.
+
+Following is an example of R Markdown file:
+```{r echo = FALSE, comment = ""}
+cat(htmltools::includeText("lab_02_2_rmd_example_1.Rmd"))
+```
+
+In RStudio, click File > New File > R Markdown, and you can get a new Rmd file with some default contents. Click “Knit” or press `Ctrl + Shift + K` to produce a report in HTML format.
+
+R Markdown file consists of following components:
+
+* __Header__ (Optional): Various render options written in YAML format. Surrounded by `---` and `---`.
+* __Text__: Narration formatted with Markdown, mixed with code chunks.
+* __R Code Chunks__: Surrounded by ```` ```{r} ```` and ```` ``` ````.
+
+# Markdown
+
+_Recommend to read: Help > Cheatsheets > R Markdown Cheat Sheet_
+
+Markdown is a lightweight markup language with plain text formatting syntax. It is designed so that it can be converted to HTML and many other formats using a tool by the same name.
+
+## Texts
+```
+Markdown is a lightweight markup language for creating formatted text using a plain-text editor. 
+John Gruber and Aaron Swartz created Markdown in 2004 as a markup language that is appealing to human readers in its source code form.
+
+Markdown is widely used in blogging, instant messaging, online forums, collaborative software, <br> documentation pages, and readme files.
+```
+
+Markdown is a lightweight markup language for creating formatted text using a plain-text editor. 
+John Gruber and Aaron Swartz created Markdown in 2004 as a markup language that is appealing to human readers in its source code form.
+
+Markdown is widely used in blogging, instant messaging, online forums, collaborative software, <br> documentation pages, and readme files.
+
+## Headers
+
+```
+# 1st Level Header
+
+## 2nd Level Header
+
+### 3rd Level Header
+
+Alternative Style for 1st Level Header
+======================================
+
+Alternative Style for 2nd Level Header
+--------------------------------------
+```
+
+# 1st Level Header
+
+## 2nd Level Header
+
+### 3rd Level Header
+
+Alternative Style for 1st Level Header
+======================================
+
+Alternative Style for 2nd Level Header
+--------------------------------------
+
+## Emphasis
+
+```
+*italic* (or _italic_)
+**bold** (or __bold__)
+`code`
+superscript^2^ and subscript~2~
+```
+
+*italic* (or _italic_)
+
+**bold** (or __bold__)
+
+`code`
+
+superscript^2^ and subscript~2~
+
+## Lists
+
+```
+* Bulleted list item 1
+* Item 2
+    * Item 2a
+    * Item 2b
+* Item3
+
+1. Numbered list item 1
+1. Item 2. The numbers are incremented automatically in the output.
+0. Item 3.
+```
+
+* Bulleted list item 1
+* Item 2
+    * Item 2a
+    * Item 2b
+* Item3
+
+1. Numbered list item 1
+1. Item 2. The numbers are incremented automatically in the output.
+0. Item 3.
+
+## Links and Images
+
+```
+<https://www.naver.com>
+
+[NAVER](https://www.naver.com)
+
+![Lena](./Lena.png)
+```
+
+<https://www.naver.com>
+
+[NAVER](https://www.naver.com)
+
+![Lena](./Lena.png){width=50%}
+
+## Tables
+
+```
+First Header  | Second Header | Third Header | Fourth Header
+:------------ | ------------- | -----------: | :----------: 
+Content Cell  | Content Cell  | Content Cell | Content Cell
+Content Cell  | Content Cell  | Content Cell | Content Cell
+```
+
+First Header  | Second Header | Third Header | Fourth Header
+:------------ | ------------- | -----------: | :----------: 
+Content Cell  | Content Cell  | Content Cell | Content Cell
+Content Cell  | Content Cell  | Content Cell | Content Cell
+
+# R Code Chunks
+
+## RStudio shortcuts
+
+In RStudio, `Ctrl + Alt + I` inserts a new code chunk and `Ctrl + Shift + Enter` runs all code in the chunk.
+
+You can quickly insert chunks like these into your file with the keyboard shortcut `Ctrl + Alt + I`.
+
+## Chunk names
+Chunks can be given an optional name: ```` ```{r by-name}````.
+
+## Chunk options
+You can pass options to chunk as follows: ```` ```{r, key1=value1, key2=value2}````.
+
+List of some chunk options:
+
+* `eval = FALSE` prevents code from being evaluated.
+* `include = FALSE` runs the code, but doesn’t show the code or results in the final document.
+* `echo = FALSE` prevents code, but not the results from appearing in the finished file.
+* `message = FALSE` or `warning = FALSE` prevents messages or warnings from appearing in the finished file.
+* `results = 'hide'` hides printed output; `fig.show = 'hide'` hides plots.
+* `error = TRUE` causes the render to continue even if code returns an error.
+* `cache = TRUE` will save the output of the chunk on disk. On subsequent runs, knitr will check to see if the code has changed, and if it hasn’t, it will reuse the cached results.
+
+
+Option	       | Run code |	Show code |	Output	| Plots |	Messages	| Warnings 
+---------------|----------|-----------|---------|-------|---------------|----------
+`eval = FALSE` |	x     |	          |	x	    | x     |	x	        |x
+`include = FALSE`|	      |	x	|  x	|x|	x|	x
+`echo = FALSE` | |		x				| | | |
+`results = "hide"` |  |  |			x			| | |
+`fig.show = "hide"`	|   |    |    | 	x		|  |
+`message = FALSE`	|   |   |    |   |	x	|
+`warning = FALSE`	|    |  |  |  |  |					x
+
+### Global options
+
+You can change the default chunk options via `knitr::opts_chunk$set()`:
+
+```{r, eval=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Formatting table
+
+```{r, echo=TRUE}
+mtcars[1:5, ]
+```
+
+```{r, echo=TRUE}
+knitr::kable(mtcars[1:5, ], caption = "Formatting table via knitr::kable")
+```
+
+## Inline code chunks
+
+```` `r ` ```` will embed the result of R code directly into the text. For instance,
+
+````{markdown, eval=FALSE, echo=TRUE}
+> We have data about `r nrow(cars)` cars.
+````
+
+will render to:
+
+> We have data about `r nrow(cars)` cars.
+
+# YAML header
+
+R Markdown uses YAML header to control many details of the output.
+
+
+## Bibliographies and citations
+
+First, you need to specify a bibliography file using the bibliography field in your file’s header. The field should contain a path from the directory that contains your R Markdown file to the file that contains the bibliography file. Common bibliography formats including BibTeX is supported.
+
+
+```
+---
+bibliography: refs.bib
+---
+Separate multiple citations with a `;`:
+Blah blah [@Ghosh2003a; @Ghosal2000a].
+
+You can add arbitrary comments inside the square brackets:
+Blah blah [see @Ghosal2000a, pp. 33-35; also @Ghosh2003a, ch. 1].
+
+Remove the square brackets to create an in-text citation:
+@Ghosh2003a says blah, or @Ghosal2000a [p. 33] says blah.
+
+Add a `-` before the citation to suppress the author's name:
+Ghosal et al. says blah [-@Ghosh2003a].
+
+### References
+```
+
+To customize the citation and bibliography style, you can specify [CSL](https://citationstyles.org/) file in the `csl` field.
+
+Blah blah [@Ghosh2003a; @Ghosal2000a]
+
+Blah blah [see @Ghosal2000a, pp. 33-35; also @Ghosh2003a, ch. 1]
+
+@Ghosh2003a says blah, or @Ghosal2000a [p. 33] says blah.
+
+Ghosal et al. says blah [-@Ghosh2003a].
+
+
+# Exercise
+
+**Write an R markdown file showing the output below.**
+
+## Data Visualization
+
+### Tidyverse and ggplot2
+
+* In this chapter we will learn how to visualize data using ggplot2, a part of the tidyverse.
+
+* install `tidyverse`, if you have not:
+
+    ```{r, eval=FALSE}
+    install.packages("tidyverse")
+    ```
+
+* After installation, load `tidyverse` by
+
+    ```{r, warning=FALSE}
+    library(tidyverse)
+    ```
+
+#### The `mpg` data frame
+
+1. Do cars with big engines use more fuel than cars with small engines?
+1. What does the relationship between engine size and fuel efficiency look like?
+1. Is it positive? Negative? Linear? Nonlinear?
+
+* `mpg` data frame can be found in the `ggplot2` package (aka `ggplot2::mpg`):
+
+```{r, echo=FALSE}
+knitr::kable(mpg[1:5, ], caption="mpg data frame")
+```
+
+* `displ`: engine size, in litres. <br> `hwy`: highway fuel efficiency, in mile per gallen (mpg).
+
+### Creating a ggplot
+
+* Scatterplot of `hwy` vs `displ`:
+
+```{r}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy))
+```
+
+-----
+
+**Acknowledgment** All contents in this note is based on the book “R for Data Science”, written by Grolemund & Wickham.

@@ -1,0 +1,172 @@
+---
+title: "quiz3"
+author: "HyeongHwan Kim"
+date: "2023-12-12"
+output: html_document
+---
+
+```{r}
+library(quantmod)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+```
+
+# Q1  
+
+```{r}
+check_integer <- function(x) {
+  return(x == round(x))
+}
+```
+
+
+```{r}
+collatz_check <- function(input) {
+  if(check_integer(input) == FALSE || input <= 0)
+    print("자연수를 입력하세요.")
+  else {
+    output <- integer()
+    while(input > 1) {
+      output <- c(output, input)
+      if(input %% 2 == 0)
+        input = input / 2
+      else
+        input = 3 * input + 1
+    }
+    output <- c(output, 1)
+    trial <- length(output)
+    return(list(trial, output))
+  }
+}
+```
+
+```{r}
+output <- collatz_check(436712387)
+tail(output[[2]])
+```
+
+```{r}
+trial <- output[[1]]
+number <- output[[2]]
+temp_df <- data.frame(trial = 1:trial, number = number)
+ggplot(temp_df) +
+  geom_line(mapping = aes(x = trial, y = number), col = "blue") +
+  geom_point(data = temp_df[nrow(temp_df),], mapping = aes(x = trial, y = number), col = "red") +
+  ggrepel::geom_label_repel(data = temp_df[nrow(temp_df),], aes(x = trial, y = number, label = str_c(temp_df[nrow(temp_df), ]$trial, "번, ", temp_df[nrow(temp_df), ]$number)))
+```
+```{r}
+collatz_check(100.5)
+```
+
+```{r}
+collatz_check(500)
+```
+
+
+# Q2  
+
+```{r}
+laker_df <- lakers %>%
+  select(date, opponent, game_type, time, period, etype, team, player, result, points)
+```
+
+```{r}
+point_summary <- laker_df %>%
+  group_by(team) %>%
+  summarise(mean = mean(points))
+
+ggplot(point_summary) +
+  geom_point(mapping = aes(mean, fct_reorder(team, mean)))
+```
+```{r}
+laker_df %>%
+  filter(etype == "free throw") %>%
+  group_by(player) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  head(10)
+```
+
+```{r}
+date_summary <- laker_df %>%
+  group_by(date) %>%
+  summarise(all_points = sum(points)) %>%
+  mutate(date = ymd(date))
+```
+
+```{r}
+ggplot(data = date_summary) +
+  geom_line(mapping = aes(x = date, y = all_points))
+```
+
+# Q3  
+
+```{r}
+stockdata <-
+  getSymbols(
+    Symbols = "TSLA",
+    src = "yahoo",
+    from = Sys.Date() - 2000,
+    to = Sys.Date(),
+    auto.assign = FALSE
+  )
+stock_date <- as.character(index(stockdata))
+stock_price <- coredata(stockdata)[, 4]
+stock <- as.data.frame(cbind(stock_date, stock_price))
+stock$stock_price <- as.numeric(stock$stock_price)
+
+head(stock, 10)
+```
+
+
+
+```{r}
+invest <- function(start_date, end_date) {
+  start <- ymd(start_date)
+  end <- ymd(end_date)
+  if((end - start)/ddays(1) < 50)
+    print("Period input error")
+  else {
+    stock_temp <- stock %>%
+      filter(stock_date >= start_date & stock_date <= end_date)
+    len <- length(stock_temp$stock_date)
+    max_ratio <- 1
+    max_date <- c()
+    for(i in 1:(len-1)) {
+      cur_val <- stock_temp$stock_price[i]
+      max_val_ind <- which.max(stock_temp$stock_price[(i+1):len]) + i
+      max_val <- stock_temp$stock_price[max_val_ind]
+      if(max_ratio < max_val / cur_val) {
+        max_ratio <- max_val / cur_val
+        max_date <- c(stock_temp$stock_date[i], stock_temp$stock_date[max_val_ind])
+      }
+    }
+    if(max_ratio == 1)
+      print("Do not invest")
+    else {
+      print(str_c("Buy stock on ", max_date[1], ", and sell it on ", max_date[2], " that earns ", round(max_ratio * 100, digits = 2),"%."))
+    }
+  }
+}
+```
+
+```{r}
+invest('2022-01-28', '2023-08-31')
+```
+```{r}
+invest('2022-09-16', '2023-01-06')
+```
+
+```{r}
+invest('2019-06-30', '2022-06-30')
+```
+
+```{r}
+invest('2022-09-16', '2022-10-30')
+```
+
+```{r}
+invest('2021-11-05', '2023-01-06')
+```

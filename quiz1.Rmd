@@ -1,0 +1,85 @@
+---
+title: "quiz1"
+author: "HyeongHwan Kim"
+date: "2023-11-07"
+output: html_document
+---
+
+
+```{r}
+library(GenderInfer)
+library(nycflights13)
+library(tidyverse)
+```
+
+# Q1
+
+
+```{r}
+planes %>%
+  group_by(manufacturer) %>%
+  summarise(n = n()) %>%
+  filter(n > 200)
+
+mnf_df <- planes %>%
+  filter(manufacturer == "AIRBUS" | manufacturer == "AIRBUS INDUSTRIE" | manufacturer == "BOEING" | manufacturer == "BOMBARDIER INC" | manufacturer == "EMBRAER")
+```
+
+
+```{r}
+q1_df <- mnf_df %>%
+  group_by(year, manufacturer) %>%
+  summarise(n = n())
+```
+```{r}
+ggplot(data = q1_df) +
+  geom_line(mapping = aes(x = year, y = n, col = manufacturer))
+```
+
+전반적으로 BOEING이 가장 제조수가 많다.  
+BOEING과 AIRBUS INDUSTRIE는 2000년 즈음에 극대를 찍고 그 후로는 평년과 비슷하거나 오히려 낮다.  
+EMBRAER과 AIRBUS는 2000년대 초반에 극대를 찍었으며, (AIRBUS는 그때 만들어지긴 했으나..)
+BOMBARDIER INC도 그 즈음에 최대로 비행기를 생산했다.  
+대부분 특정 시점에서 최고점을 갖고 그 이후로 현재까지 비행기를 특별히 많이 생산하지는 않는다.  
+
+
+# Q2
+
+
+```{r}
+authors_df <- assign_gender(data_df = authors, first_name_col = "first_name")
+```
+
+
+```{r}
+authors_df %>%
+  filter(gender != "U") %>%
+  group_by(gender) %>%
+  summarise(most_published_year = rownames(table(publication_years))[which.max(table(publication_years))], count = n()) %>%
+  mutate(most_published_year = as.integer(most_published_year))
+  
+```
+# Q3  
+
+```{r}
+jobs_df <- read.csv("NYC_Jobs-1.csv")
+```
+
+```{r}
+new_jobs_df <- jobs_df %>%
+  filter(Job.Category == "Finance, Accounting, & Procurement" | Job.Category == "Technology, Data & Innovation" | Job.Category == "Health") %>%
+  filter(Salary > 10000)
+```
+
+```{r}
+high_jobs_df <- new_jobs_df %>%
+  filter(Salary >= 200000)
+```
+
+```{r}
+ggplot(data = new_jobs_df) +
+  geom_boxplot(mapping = aes(x = Job.Category, y = Salary)) +
+  geom_point(data = high_jobs_df, mapping = aes(x = Job.Category, y = Salary), col = "red")
+```
+
+중앙값을 비교하면 Technology, Data & Innovation > Finance, Accounting, & Procurement > Health 순으로 연봉이 높다. 특히 Q2 연봉이 높은 순서대로, 각각의 Q3는 다음 카테고리의 Q2보다 위쪽에 존재하기 때문에 연봉 차이가 충분히 난다고 볼 수 있다. 그러나 Finance, Accounting, & Procurement의 outlier (연봉 $200000 이상)이 Techonology, Data & Innovation의 outlier보다 개수도 많고, 더 높은 연봉을 갖고 있다는 점은 주목할만하다.

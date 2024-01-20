@@ -1,0 +1,348 @@
+---
+title: "hw3"
+author: "HyeongHwan Kim"
+date: "2023-10-26"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(nycflights13)
+```
+
+
+# Textbook 5.6  
+## Problem 1
+Restyle the following pipelines following the guidelines above.  
+
+```{r}
+flights |>
+  filter(dest == "IAH") |>
+  group_by(year, month, day) |>
+  summarize(n = n(),
+ delay = mean(arr_delay, na.rm=TRUE)) |>
+  filter(n > 10)
+
+flights |>
+  filter(carrier == "UA", dest %in% c("IAH", "HOU"), sched_dep_time >
+ 0900, sched_arr_time < 2000) |>
+  group_by(flight) |>
+  summarize(delay = mean(
+arr_delay, na.rm=TRUE), cancelled = sum(is.na(arr_delay)), n = n()) |>
+  filter(n > 10)
+```
+
+# Textbook 17.3.1  
+## Problem 1  
+
+Explore the distribution of rincome (reported income). What makes the default bar chart hard to understand? How could you improve the plot?
+
+```{r}
+cat_data <- forcats::gss_cat
+```
+
+
+```{r}
+ggplot(cat_data, mapping = aes(x = rincome)) +
+  geom_bar()
+```
+x-labels overlap each other.  
+
+```{r}
+ggplot(cat_data, mapping = aes(x = rincome)) +
+  geom_bar() +
+  coord_flip()
+```
+
+## Problem 2  
+What is the most common relig in this survey? What’s the most common partyid?
+
+```{r}
+cat_data %>%
+  group_by(relig) %>%
+  summarise(n = n())
+```
+
+Protestant is the most common religion.
+
+```{r}
+cat_data %>%
+  group_by(partyid) %>%
+  summarise(n = n())
+```
+Independent is the most common partyid
+
+# Textbook 17.4.1  
+## Problem 1  
+
+There are some suspiciously high numbers in tvhours. Is the mean a good summary?
+
+```{r}
+ggplot(data = cat_data, mapping = aes(y = tvhours)) +
+  geom_boxplot()
+```
+
+Looking at the box plot above, it's evident that there are numerous outliers. Therefore, using the mean, which is not a robust statistic, may not be appropriate.  
+
+## Problem 2  
+
+```{r}
+cat_data
+```
+
+marital, race, rincome, partyid, relig, denom columns are factor
+
+```{r}
+levels(cat_data$marital)
+```
+```{r}
+levels(cat_data$race)
+```
+```{r}
+levels(cat_data$rincome)
+```
+```{r}
+levels(cat_data$partyid)
+```
+```{r}
+levels(cat_data$relig)
+```
+```{r}
+levels(cat_data$denom)
+```
+
+Except for 'rincome' and 'partyid', others have arbitrary order.  
+
+# Textbook 17.5.1  
+## Problem 1  
+How have the proportions of people identifying as Democrat, Republican, and Independent changed over time?  
+
+```{r}
+cat_data_n <- cat_data %>%
+  mutate(
+    partyid = fct_collapse(partyid,
+      "other" = c("No answer", "Don't know", "Other party"),
+      "rep" = c("Strong republican", "Not str republican"),
+      "ind" = c("Ind,near rep", "Independent", "Ind,near dem"),
+      "dem" = c("Not str democrat", "Strong democrat"))
+  ) %>%
+  group_by(year, partyid) %>%
+  summarise(n = n())
+```
+
+```{r}
+cat_data_tot <- cat_data_n %>%
+  group_by(year) %>%
+  summarise(total = sum(n))
+```
+
+```{r}
+cat_data_p <- cat_data_n %>%
+  left_join(cat_data_tot) %>%
+  mutate(p = n / total) %>%
+  select(year, partyid, p) %>%
+  filter(partyid != 'other')
+```
+
+```{r}
+ggplot(cat_data_p, mapping = aes(x = year, y = p, color = partyid)) +
+  geom_line()
+```
+
+
+The trend for rep has been consistently decreasing since 2004. ind and dem exhibit a conflicting relationship, with their patterns showing opposite directions of increase and decrease. There doesn't seem to be a specific trend for them over time.  
+
+# Textbook 18.2.5  
+## Problem 3  
+
+For each of the following date-times, show how you’d parse it using a readr column specification and a lubridate function.  
+
+```{r}
+library(lubridate)
+```
+
+```{r}
+library(readr)
+```
+
+```{r}
+d1 <- "January 1, 2010"
+d2 <- "2015-Mar-07"
+d3 <- "06-Jun-2017"
+d4 <- c("August 19 (2015)", "July 1 (2015)")
+d5 <- "12/30/14" # Dec 30, 2014
+t1 <- "1705"
+t2 <- "11:15:10.12 PM"
+```
+
+```{r}
+parse_date(d1, "%B %d, %Y")
+mdy(d1)
+```
+mdy function do not recognize d1.
+
+```{r}
+parse_date(d2, "%Y-%b-%d")
+ymd(d2)
+```
+```{r}
+parse_date(d3, "%d-%b-%Y")
+dmy(d3)
+```
+```{r}
+parse_date(d4, "%B %d (%Y)")
+mdy(d4)
+```
+
+```{r}
+parse_date(d5, "%m/%d/%y")
+mdy(d5)
+```
+```{r}
+parse_time(t1, "%H%M")
+hm(paste0(substr(t1, 1, 2), ":", substr(t1, 3, 4)))
+```
+hm also do not recognize t1 without adding ':'.
+
+```{r}
+parse_time(t2, "%H:%M:%OS %p")
+hms(t2)
+```
+# Textbook 18.3.4  
+## Problem 1  
+
+How does the distribution of flight times within a day change over the course of the year?  
+```{r}
+dep_flights <- flights %>%
+  mutate(parsed_sched_dep_time = parse_time(
+    ifelse(str_length(as.character(sched_dep_time)) == 3, 
+           paste0("0", as.character(sched_dep_time)), 
+           as.character(sched_dep_time)), "%H%M")) %>%
+  select(month, parsed_sched_dep_time)
+```
+
+```{r}
+dep_flights %>%
+  mutate(month = as.character(month))
+
+ggplot(dep_flights, mapping = aes(x = month, group = month, y = parsed_sched_dep_time)) +
+  geom_boxplot()
+```
+When drawing a boxplot of departure times by month, it appears that, excluding outliers in July, the distributions are nearly identical.  
+
+## Problem 4  
+
+How does the average delay time change over the course of a day? Should you use dep_time or sched_dep_time? Why?  
+
+```{r}
+d_flights <- flights %>%
+  select(hour, dep_delay) %>%
+  group_by(hour) %>%
+  summarise(avg = mean(dep_delay, na.rm = TRUE))
+```
+
+```{r}
+ggplot(d_flights, mapping = aes(x = hour, y = avg)) +
+  geom_line()
+```
+
+
+The mean values increase until 8:00 PM and then decrease thereafter.  
+
+```{r}
+new_d_flights <- flights %>%
+  mutate(parsed_sched_dep_time = parse_time(
+    ifelse(str_length(as.character(sched_dep_time)) == 3, 
+           paste0("0", as.character(sched_dep_time)), 
+           as.character(sched_dep_time)), "%H%M")) %>%
+  mutate(parsed_dep_time = parse_time(
+    ifelse(str_length(as.character(dep_time)) == 3, 
+           paste0("0", as.character(dep_time)), 
+           as.character(dep_time)), "%H%M")) %>%
+  mutate(parsed_dep_delay = difftime(parsed_dep_time, parsed_sched_dep_time, unit = 'mins')) %>%
+  select(hour, parsed_dep_delay) %>%
+  group_by(hour) %>%
+  summarise(avg = mean(parsed_dep_delay, na.rm = TRUE))
+```
+
+```{r}
+ggplot(new_d_flights, mapping = aes(x = hour, y = avg)) +
+  geom_line()
+```
+```{r}
+new_d_flights
+```
+
+If using just dep_time and sched_dep_time, average delay time  decreases after 20h and even its value is negative when the hour is 22 and 23. It's because the code using dep_time and sched_dep_time cannot consider time across the day.  
+
+# Textbook 18.4.4  
+## Problem 3  
+Write a function that given your birthday (as a date), returns how old you are in years.  
+
+```{r}
+howOld <- function(birthday) {
+  age <- as.numeric(today() - birthday)
+  return(floor(age / 365.25))
+}
+
+my_birthday = ymd("2003-12-16")
+howOld(my_birthday)
+```
+# Textbook 26.2.5  
+## Problem 4  
+Write your own functions to compute the variance and skewness of a numeric vector. You can look up the definitions on Wikipedia or elsewhere.  
+
+```{r}
+cal_variance <- function(x) {
+  mean_x <- mean(x)
+  dv <- x - mean_x
+  var <- sum((x - dv) ** 2) / (length(x)-1)
+  return(var)
+}
+
+cal_skewness <- function(x) {
+  mean_x <- mean(x)
+  standard_x <- (x - mean_x) / sqrt(cal_variance(x))
+  sk <- sum(standard_x ** 3) / (length(x) - 1)
+  return(sk)
+}
+
+cal_variance(c(1, 2, 3, 4))
+cal_skewness(c(1, 2, 3, 8))
+```
+
+# Textbook 26.5.1  
+## Problem 1  
+
+Read the source code for each of the following two functions, puzzle out what they do, and then brainstorm better names.  
+
+```{r}
+library(stringr)
+```
+
+
+```{r}
+f1 <- function(string, prefix) {
+  str_sub(string, 1, str_length(prefix)) == prefix
+}
+
+f3 <- function(x, y) {
+  rep(y, length.out = length(x))
+}
+```
+f1: Determines whether a string has a specific prefix or not  
+f3: Repeat y as many times as the length of vector x  
+
+```{r}
+is_prefix <- function(string, prefix) {
+  str_sub(string, 1, str_length(prefix)) == prefix
+}
+
+repeat_vec <- function(x, y) {
+  rep(y, length.out = length(x))
+}
+```
+
+
+
