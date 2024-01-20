@@ -1,0 +1,613 @@
+---
+title: "FDR control via data splitting"
+author: "HyeongHwan Kim"
+date: "2024-01-01"
+output: html_document
+---
+
+```{r}
+library(MASS)
+library(glmnet)
+library(stringr)
+library(hdi)
+library(purrr)
+library(ggplot2)
+library(tidyverse)
+```
+# Generating data
+
+$y = X\beta^{*}+\epsilon$
+$\epsilon \sim N(0, \sigma^{2}I_{n})$
+
+each row of X follows $N(0, \Sigma)$ 
+
+$\beta_{j}^{*} \sim N(0, \delta \sqrt{\log p/n})$  
+$q = 0.1$  
+
+```{r}
+set.seed(12345)
+```
+
+
+```{r}
+p <- 500
+p1 <- 50
+n <- 1000
+delta <- 3
+rho <- 0
+m <- 50
+q <- 0.1
+ep <- mvrnorm(1, rep(0, n), diag(1, n))
+```
+
+```{r}
+return_Sigma <- function(p, rho) {
+  diag <- c(1)
+  p_prime <- p / 10
+  for(i in 2:p_prime) {
+    diag <- c(diag, (p_prime - i) * rho / (p_prime - 1))
+  }
+  t <- toeplitz(diag)
+  
+  bdm <- list()
+  
+  for(i in 1:10) {
+    bdm[[i]] <- t
+  }
+  
+  Sigma <- as.matrix(bdiag(bdm))
+  return(Sigma)
+}
+```
+
+```{r}
+return_beta <- function(delta, p, n, p1) {
+  ind_set <- sample(1:p, p1)
+  beta <- vector("double", p)
+  for(i in 1:p) {
+    if(i %in% ind_set) {
+      beta[i] <- rnorm(1, 0, delta * sqrt(log(p) / n))
+    }
+    else {
+      beta[i] <- 0
+    }
+  }
+  return(list(beta, ind_set))
+}
+```
+
+
+```{r}
+S <- return_Sigma(p, rho)
+X <- mvrnorm(n, mu = rep(0, p), Sigma = S)
+b_temp <- return_beta(delta, p, n, p1)
+b <- b_temp[[1]]
+h1_set <- b_temp[[2]]
+h0_set <- setdiff(1:p, h1_set)
+y <- X %*% b + ep
+X_df <- as.data.frame(X)
+df <- cbind(X_df, y)
+```
+
+```{r}
+make_dataset <- function(p, n, delta, rho) {
+  ep <- mvrnorm(1, rep(0, n), diag(1, n))
+  
+  S <- return_Sigma(p, rho)
+  X <- mvrnorm(n, mu = rep(0, p), Sigma = S)
+  b_temp <- return_beta(delta, p, n, p1)
+  b <- b_temp[[1]]
+  h1_set <- b_temp[[2]]
+  h0_set <- setdiff(1:p, h1_set)
+  y <- X %*% b + ep
+  X_df <- as.data.frame(X)
+  df <- cbind(X_df, y)
+  
+  return(list(X, y, h1_set, df))
+}
+```
+
+
+# BHq  
+
+```{r}
+fit.lasso <- lasso.proj(X, y, return.Z = TRUE)
+Z <- fit.lasso$Z
+p.value <- fit.lasso$pval
+sorted_ind <- order(p.value)
+sorted <- p.value[sorted_ind]
+lg <- sorted < (1:p) * q / p
+L <- max(which(lg == TRUE))
+FDR_BHq <- 1 - sum(sorted_ind[1:L] %in% h1_set) / L
+power_BHq <- sum(sorted_ind[1:L] %in% h1_set) / p1
+```
+```{r}
+BHq <- function(n, p, q, data) {
+  X <- data[[1]]
+  y <- data[[2]]
+  h1_set <- data[[3]]
+  
+  fit.lasso <- lasso.proj(X, y, return.Z = TRUE)
+  # Z <- fit.lasso$Z
+  p.value <- fit.lasso$pval
+  sorted_ind <- order(p.value)
+  sorted <- p.value[sorted_ind]
+  lg <- sorted < (1:p) * q / p
+  L <- max(which(lg == TRUE))
+  FDR_BHq <- 1 - sum(sorted_ind[1:L] %in% h1_set) / L
+  power_BHq <- sum(sorted_ind[1:L] %in% h1_set) / p1
+  
+  return(list(FDR_BHq, power_BHq))
+}
+```
+
+```{r}
+BHq2 <- function(n, p, q, delta, rho) {
+  data <- make_dataset(p, n, delta, rho)
+  BHq(n, p, q, data)
+}
+```
+
+
+# DS (data splitting)  
+
+```{r}
+f1 <- function(u, v) {
+  return(2 * apply(data.frame(u, v), 1, min))
+}
+
+f2 <- function(u, v) {
+  return(u * v)
+}
+
+f3 <- function(u, v) {
+  return(u + v)
+}
+
+mirror <- function(b1, b2, type) {
+  if(type == 1)
+    return(sign(b1 * b2) * f1(abs(b1), abs(b2)))
+  else if(type == 2)
+    return(sign(b1 * b2) * f2(abs(b1), abs(b2)))
+  else if(type == 3)
+    return(sign(b1 * b2) * f3(abs(b1), abs(b2)))
+}
+
+return_cutoff <- function(q, mir) {
+  t <- seq(0, max(abs(mir)), by = 0.0001)
+  
+  FDP <- vector("double", length(t))
+  for(i in 1:length(t)) {
+    FDP[i] <- sum(mir < -t[i]) / max(1, sum(mir > t[i]))
+  }
+  return(t[min(which((FDP <= q) == TRUE))])
+}
+
+```
+
+Empirically we find that the half-half sample splitting leads to the highest power.
+
+```{r}
+fir_gp <- sample(1:n, n/2)
+sec_gp <- setdiff(1:n, fir_gp)
+fir_df <- df[fir_gp, ]
+sec_df <- df[sec_gp, ]
+fir_X <- fir_df[, 1:p]
+sec_X <- sec_df[, 1:p]
+fir_y <- fir_df$y
+sec_y <- sec_df$y
+```
+
+```{r}
+# fir_las <- lasso.proj(fir_X, fir_y, return.Z = TRUE)
+# sec_las <- lasso.proj(sec_X, sec_y, return.Z = TRUE)
+```
+
+```{r}
+fir_las_mod <- cv.glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1)
+fir_lam <- fir_las_mod$lambda.min
+sec_las_mod <- cv.glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1)
+sec_lam <- sec_las_mod$lambda.min
+
+fir_las <- glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1, lambda = fir_lam)
+b1 <- as.vector(predict(fir_las, type = "coefficient"))[-1]
+sec_las <- glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1, lambda = sec_lam)
+b2 <- as.vector(predict(sec_las, type = "coefficient"))[-1]
+
+```
+
+```{r}
+mir_stat <- list()
+
+mir_stat[[1]] <- mirror(b1, b2, 1)
+mir_stat[[2]] <- mirror(b1, b2, 2)
+mir_stat[[3]] <- mirror(b1, b2, 3)
+
+FDR_DS <- list()
+power_DS <- list()
+
+# mir_stat[[1]]
+
+for(i in 1:3) {
+  tau <- return_cutoff(q, mir_stat[[i]])
+  FDR_DS[[i]] <- sum(mir_stat[[i]] < -tau) / max(1, sum(mir_stat[[i]] > tau))
+  sel_ind <- which((mir_stat[[i]] > tau) == TRUE)
+  power_DS[[i]] <- sum(sel_ind %in% h1_set) / length(h1_set)
+}
+
+FDR_DS[[1]]
+FDR_DS[[2]]
+FDR_DS[[3]]
+
+power_DS[[1]]
+power_DS[[2]]
+power_DS[[3]]
+```
+
+```{r}
+DS <- function(n, p, q, data) {
+  
+  df <- data[[4]]
+  h1_set <- data[[3]]
+  
+  fir_gp <- sample(1:n, n/2)
+  sec_gp <- setdiff(1:n, fir_gp)
+  fir_df <- df[fir_gp, ]
+  sec_df <- df[sec_gp, ]
+  fir_X <- fir_df[, 1:p]
+  sec_X <- sec_df[, 1:p]
+  fir_y <- fir_df$y
+  sec_y <- sec_df$y
+  
+  fir_las_mod <- cv.glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1)
+  fir_lam <- fir_las_mod$lambda.min
+  sec_las_mod <- cv.glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1)
+  sec_lam <- sec_las_mod$lambda.min
+  
+  fir_las <- glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1, lambda = fir_lam)
+  b1 <- as.vector(predict(fir_las, type = "coefficient"))[-1]
+  sec_las <- glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1, lambda = sec_lam)
+  b2 <- as.vector(predict(sec_las, type = "coefficient"))[-1]
+  
+  mir_stat <- list()
+
+  mir_stat[[1]] <- mirror(b1, b2, 1)
+  mir_stat[[2]] <- mirror(b1, b2, 2)
+  mir_stat[[3]] <- mirror(b1, b2, 3)
+  
+  FDR_DS <- vector("double", length = 3)
+  power_DS <- vector("double", length = 3)
+  
+  for(i in 1:3) {
+    tau <- return_cutoff(q, mir_stat[[i]])
+    FDR_DS[i] <- sum(mir_stat[[i]] < -tau) / max(1, sum(mir_stat[[i]] > tau))
+    sel_ind <- which((mir_stat[[i]] > tau) == TRUE)
+    power_DS[i] <- sum(sel_ind %in% h1_set) / length(h1_set)
+  }
+  
+  return(list(FDR_DS, power_DS))
+}
+```
+
+```{r}
+DS2 <- function(n, p, q, delta, rho) {
+  data <- make_dataset(p, n, delta, rho)
+  return(DS(n, p, q, data))
+}
+```
+
+
+## plots of DS results
+
+```{r}
+corr_vec <- c(0, 0.2, 0.4, 0.6, 0.8)
+FDR_vec <- list()
+power_vec <- list()
+
+for(i in 1:length(corr_vec)) {
+  result <- DS2(500, 500, 0.1, 5, corr_vec[i])
+  FDR_vec[[i]] <- result[[1]]
+  power_vec[[i]] <- result[[2]]
+}
+
+FDR_df <- as.data.frame(FDR_vec)
+names(FDR_df) <- corr_vec
+FDR_df <- as.data.frame(t(FDR_df))
+FDR_df <- cbind(corr = rownames(FDR_df), FDR_df)
+rownames(FDR_df) <- 1:nrow(FDR_df)
+FDR_df <- pivot_longer(FDR_df, cols = -corr, names_to = "method", values_to = "FDR")
+
+power_df <- as.data.frame(power_vec)
+names(power_df) <- corr_vec
+power_df <- as.data.frame(t(power_df))
+power_df <- cbind(corr = rownames(power_df), power_df)
+rownames(power_df) <- 1:nrow(power_df)
+power_df <- pivot_longer(power_df, cols = -corr, names_to = "method", values_to = "power")
+
+```
+
+
+
+```{r}
+ggplot(data = FDR_df) +
+  geom_point(mapping = aes(x = corr, y = FDR, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0, 0.15))
+```
+```{r}
+ggplot(data = power_df) +
+  geom_point(mapping = aes(x = corr, y = power, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0.45, 0.8))
+```
+
+```{r}
+sig_vec <- c(3, 4, 5, 6, 7)
+FDR_vec <- list()
+power_vec <- list()
+
+for(i in 1:length(sig_vec)) {
+  result <- DS2(500, 500, 0.1, sig_vec[i], 0.4)
+  FDR_vec[[i]] <- result[[1]]
+  power_vec[[i]] <- result[[2]]
+}
+
+FDR_df <- as.data.frame(FDR_vec)
+names(FDR_df) <- sig_vec
+FDR_df <- as.data.frame(t(FDR_df))
+FDR_df <- cbind(sig = rownames(FDR_df), FDR_df)
+rownames(FDR_df) <- 1:nrow(FDR_df)
+FDR_df <- pivot_longer(FDR_df, cols = -sig, names_to = "method", values_to = "FDR")
+
+power_df <- as.data.frame(power_vec)
+names(power_df) <- sig_vec
+power_df <- as.data.frame(t(power_df))
+power_df <- cbind(sig = rownames(power_df), power_df)
+rownames(power_df) <- 1:nrow(power_df)
+power_df <- pivot_longer(power_df, cols = -sig, names_to = "method", values_to = "power")
+```
+
+```{r}
+ggplot(data = FDR_df) +
+  geom_point(mapping = aes(x = sig, y = FDR, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0, 0.15))
+```
+```{r}
+ggplot(data = power_df) +
+  geom_point(mapping = aes(x = sig, y = power, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0.45, 0.9))
+```
+
+
+# MDS (Multiple Data Splitting)  
+
+```{r}
+MDS <- function(n, p, q, m, data) {
+  inc_vec <- rep(0, p)
+  
+  df <- data[[4]]
+  h1_set <- data[[3]]
+  
+  for(i in 1:m) {
+    fir_gp <- sample(1:n, n/2)
+    sec_gp <- setdiff(1:n, fir_gp)
+    fir_df <- df[fir_gp, ]
+    sec_df <- df[sec_gp, ]
+    fir_X <- fir_df[, 1:p]
+    sec_X <- sec_df[, 1:p]
+    fir_y <- fir_df$y
+    sec_y <- sec_df$y
+    
+    fir_las_mod <- cv.glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1)
+    fir_lam <- fir_las_mod$lambda.min
+    sec_las_mod <- cv.glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1)
+    sec_lam <- sec_las_mod$lambda.min
+    
+    fir_las <- glmnet(as.matrix(fir_X), as.matrix(fir_y), alpha = 1, lambda = fir_lam)
+    b1 <- as.vector(predict(fir_las, type = "coefficient"))[-1]
+    sec_las <- glmnet(as.matrix(sec_X), as.matrix(sec_y), alpha = 1, lambda = sec_lam)
+    b2 <- as.vector(predict(sec_las, type = "coefficient"))[-1]
+    
+    mir_stat <- mirror(b1, b2, 3)
+    tau <- return_cutoff(q, mir_stat)
+    sel_ind <- which((mir_stat > tau) == TRUE)
+    
+    for(j in sel_ind) {
+      inc_vec[j] = inc_vec[j] + 1 / max(1, length(sel_ind))
+    }
+  }
+  
+  inc_vec <- inc_vec / m
+  
+  sorted_ind <- order(inc_vec)
+  sorted <- inc_vec[sorted_ind]
+  sum <- 0
+  j <- 1
+  
+  while(sum <= q) {
+    sum = sum + sorted[j]
+    j <- j + 1
+  }
+
+  FDR_MDS <- 1 - sum(sorted_ind[j:p] %in% h1_set) / (p - j + 1)
+  power_MDS <- sum(sorted_ind[j:p] %in% h1_set) / p1
+  
+  return(list(FDR_MDS, power_MDS))
+}
+```
+
+```{r}
+MDS2 <- function(n, p, q, delta, rho, m) {
+  
+  data <- make_dataset(p, n, delta, rho)
+  return(MDS(n, p, q, m, data))
+}
+```
+
+
+# Comparison  
+
+```{r}
+corr_vec <- c(0, 0.2, 0.4, 0.6, 0.8)
+# FDR_BHq_vec <- list()
+# power_BHq_vec <- list()
+FDR_DS_vec <- vector("double", length = length(corr_vec))
+power_DS_vec <- vector("double", length = length(corr_vec))
+FDR_MDS_vec <- vector("double", length = length(corr_vec))
+power_MDS_vec <- vector("double", length = length(corr_vec))
+
+for(i in 1:length(corr_vec)) {
+  print(i)
+  data <- make_dataset(2000, 800, 5, corr_vec[i])
+  # result <- BHq(800, 2000, 0.1, data)
+  # FDR_BHq_vec[[i]] <- result[[1]]
+  # power_BHq_vec[[i]] <- result[[2]]
+  result <- DS(800, 2000, 0.1, data)
+  FDR_DS_vec[i] <- result[[1]][[3]]
+  power_DS_vec[i] <- result[[2]][[3]]
+  result <- MDS(800, 2000, 0.1, 50, data)
+  FDR_MDS_vec[i] <- result[[1]]
+  power_MDS_vec[i] <- result[[2]]
+}
+```
+```{r}
+FDR_df <- data.frame(cor = corr_vec, DS = FDR_DS_vec, MDS = FDR_MDS_vec)
+FDR_df <- pivot_longer(FDR_df, cols = -cor, names_to = "method", values_to = "FDR")
+ggplot(data = FDR_df) +
+  geom_point(mapping = aes(x = cor, y = FDR, col= method), size = 3)
+```
+```{r}
+power_df <- data.frame(cor = corr_vec, DS = power_DS_vec, MDS = power_MDS_vec)
+power_df <- pivot_longer(power_df, cols = -cor, names_to = "method", values_to = "power")
+ggplot(data = power_df) +
+  geom_point(mapping = aes(x = cor, y = power, col= method), size = 3)
+```
+
+```{r}
+sig_vec <- c(3, 4, 5, 6, 7)
+# FDR_BHq_vec <- list()
+# power_BHq_vec <- list()
+FDR_DS_vec <- vector("double", length = length(sig_vec))
+power_DS_vec <- vector("double", length = length(sig_vec))
+FDR_MDS_vec <- vector("double", length = length(sig_vec))
+power_MDS_vec <- vector("double", length = length(sig_vec))
+
+for(i in 1:length(sig_vec)) {
+  print(i)
+  data <- make_dataset(2000, 800, sig_vec[i], 0.5)
+  # result <- BHq(800, 2000, 0.1, data)
+  # FDR_BHq_vec[[i]] <- result[[1]]
+  # power_BHq_vec[[i]] <- result[[2]]
+  result <- DS(800, 2000, 0.1, data)
+  FDR_DS_vec[i] <- result[[1]][[3]]
+  power_DS_vec[i] <- result[[2]][[3]]
+  result <- MDS(800, 2000, 0.1, 50, data)
+  FDR_MDS_vec[i] <- result[[1]]
+  power_MDS_vec[i] <- result[[2]]
+}
+```
+
+```{r}
+FDR_df <- data.frame(sig = sig_vec, DS = FDR_DS_vec, MDS = FDR_MDS_vec)
+FDR_df <- pivot_longer(FDR_df, cols = -sig, names_to = "method", values_to = "FDR")
+ggplot(data = FDR_df) +
+  geom_point(mapping = aes(x = sig, y = FDR, col= method), size = 3)
+```
+```{r}
+power_df <- data.frame(sig = sig_vec, DS = power_DS_vec, MDS = unlist(power_MDS_vec))
+power_df <- pivot_longer(power_df, cols = -sig, names_to = "method", values_to = "power")
+ggplot(data = power_df) +
+  geom_point(mapping = aes(x = sig, y = power, col= method), size = 3)
+```
+```{r}
+p_vec <- c(400, 800, 1200, 1600, 2000)
+# FDR_BHq_vec <- list()
+# power_BHq_vec <- list()
+FDR_DS_vec <- vector("double", length = length(sig_vec))
+power_DS_vec <- vector("double", length = length(sig_vec))
+FDR_MDS_vec <- vector("double", length = length(sig_vec))
+power_MDS_vec <- vector("double", length = length(sig_vec))
+
+for(i in 1:length(p_vec)) {
+  print(i)
+  data <- make_dataset(p_vec[i], 800, 9, 0.5)
+  # result <- BHq(800, 2000, 0.1, data)
+  # FDR_BHq_vec[[i]] <- result[[1]]
+  # power_BHq_vec[[i]] <- result[[2]]
+  result <- DS(800, 2000, 0.1, data)
+  FDR_DS_vec[i] <- result[[1]][[3]]
+  power_DS_vec[i] <- result[[2]][[3]]
+  result <- MDS(800, 2000, 0.1, 50, data)
+  FDR_MDS_vec[i] <- result[[1]]
+  power_MDS_vec[i] <- result[[2]]
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+corr_vec <- c(0, 0.2, 0.4, 0.6, 0.8)
+FDR_vec <- list()
+power_vec <- list()
+
+for(i in 1:length(corr_vec)) {
+  result <- MDS2(800, 2000, 0.1, 5, corr_vec[i], 5)
+  FDR_vec[[i]] <- result[1]
+  power_vec[[i]] <- result[2]
+}
+
+FDR_df <- as.data.frame(FDR_vec)
+names(FDR_df) <- corr_vec
+FDR_df <- as.data.frame(t(FDR_df))
+FDR_df <- cbind(corr = rownames(FDR_df), FDR_df)
+rownames(FDR_df) <- 1:nrow(FDR_df)
+FDR_df <- pivot_longer(FDR_df, cols = -corr, names_to = "method", values_to = "FDR")
+
+power_df <- as.data.frame(power_vec)
+names(power_df) <- corr_vec
+power_df <- as.data.frame(t(power_df))
+power_df <- cbind(corr = rownames(power_df), power_df)
+rownames(power_df) <- 1:nrow(power_df)
+power_df <- pivot_longer(power_df, cols = -corr, names_to = "method", values_to = "power")
+```
+
+```{r}
+ggplot(data = FDR_df) +
+  geom_point(mapping = aes(x = corr, y = FDR, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0, 0.5))
+```
+```{r}
+ggplot(data = power_df) +
+  geom_point(mapping = aes(x = corr, y = power, color = method, shape = method), size = 3) +
+  scale_y_continuous(limits = c(0.3, 0.8))
+```
